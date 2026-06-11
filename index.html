@@ -536,12 +536,13 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 <div class="modal-bg" id="add-friend-modal">
   <div class="modal">
     <h2>Add friends</h2>
-    <p>Add by invite link, or tap to add from suggestions. Added friends appear in your friends list and group leaderboards.</p>
-    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Your invite link</p>
+    <p>Search for friends by the name they signed up with. They need a Streakly account first — share the app link below to invite them.</p>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Search by name</p>
+    <input type="text" id="friend-search-in" placeholder="Type a friend's name…" oninput="onFriendSearch()" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:12px"/>
+    <div id="friend-search-results" style="margin-bottom:18px"></div>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Or invite them to Streakly</p>
     <div class="share-url" id="friend-invite-url" style="margin-bottom:10px">Generating…</div>
-    <button class="btn-primary btn-copy" style="margin-bottom:20px" onclick="copyFriendInvite()">Copy my invite link</button>
-    <p style="margin-bottom:10px;font-weight:500;color:var(--text);font-size:13px">Suggestions</p>
-    <div id="suggested-friends" style="margin-bottom:18px"></div>
+    <button class="btn-primary btn-copy" style="margin-bottom:20px" onclick="copyFriendInvite()">Copy app link</button>
     <button class="btn-ghost" style="width:100%" onclick="closeAddFriend()">Done</button>
   </div>
 </div>
@@ -637,6 +638,9 @@ async function onLoggedIn(){
     await sb.from('profiles').update({ display_name: pendingName }).eq('id', currentUser.id);
     localStorage.removeItem('streakly_pending_name');
   }
+  // Load my display name from profile
+  const { data: myProfile } = await sb.from('profiles').select('display_name').eq('id', currentUser.id).single();
+  if(myProfile && myProfile.display_name){ state.name = myProfile.display_name; saveStateLocal(); }
   // Load this user's cloud data into local state
   await loadFromCloud();
   // Show the app
@@ -709,6 +713,91 @@ async function cloudSetCompletion(habitId, day, mult){
 async function cloudRemoveCompletion(habitId, day){
   if(!cloudReady) return;
   await sb.from('completions').delete().eq('user_id', currentUser.id).eq('habit_id', habitId).eq('day', day);
+}
+
+// ====== CLOUD SOCIAL (friends, leaderboard, profiles) ======
+const WEEK_AGO = (()=>{ const d=new Date(); d.setDate(d.getDate()-6); return d.toISOString().slice(0,10); })();
+
+// avatar color helper
+function colorFor(name){
+  const colors=[['#B5D4F4','#0C447C'],['#F4C0D1','#72243E'],['#C0DD97','#3B6D11'],['#F4D5A0','#7C4A0E'],['#C9C2F0','#37257A'],['#9BDCD4','#0C5249']];
+  let h=0; for(let i=0;i<name.length;i++)h=((h<<5)-h)+name.charCodeAt(i);
+  const c=colors[Math.abs(h)%colors.length];
+  return {bg:c[0],fg:c[1]};
+}
+function initialsOf(name){
+  const parts=(name||'?').trim().split(/\s+/);
+  return ((parts[0]?.[0]||'')+(parts[1]?.[0]||'')).toUpperCase()||'?';
+}
+
+// My friends list, hydrated with profile info + this-week points
+let cloudFriends = [];   // [{id, name, bg, fg, initials, weekPts, todayPts}]
+let allProfiles = {};    // id -> {display_name}
+
+async function loadFriends(){
+  if(!cloudReady) return;
+  // Get friend links where I'm the owner
+  const { data: links } = await sb.from('friends').select('friend_id').eq('user_id', currentUser.id);
+  const friendIds = (links||[]).map(l=>l.friend_id);
+  if(friendIds.length===0){ cloudFriends=[]; return; }
+  // Get their profiles
+  const { data: profs } = await sb.from('profiles').select('id, display_name').in('id', friendIds);
+  // Compute their points this week
+  cloudFriends = [];
+  for(const p of (profs||[])){
+    const pts = await userPointsBetween(p.id, WEEK_AGO, TODAY);
+    const todayPts = await userPointsBetween(p.id, TODAY, TODAY);
+    const c = colorFor(p.display_name||'Friend');
+    cloudFriends.push({ id:p.id, name:p.display_name||'Friend', bg:c.bg, fg:c.fg, initials:initialsOf(p.display_name), weekPts:pts, todayPts });
+  }
+}
+
+// Sum points for a user between two dates (inclusive)
+async function userPointsBetween(userId, fromDay, toDay){
+  const { data: comps } = await sb.from('completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', fromDay).lte('day', toDay);
+  if(!comps || comps.length===0) return 0;
+  const habitIds = [...new Set(comps.map(c=>c.habit_id))];
+  const { data: habits } = await sb.from('habits').select('id, points').in('id', habitIds);
+  const ptsMap = {}; (habits||[]).forEach(h=>ptsMap[h.id]=h.points);
+  return comps.reduce((s,c)=>s+(ptsMap[c.habit_id]||0)*c.multiplier, 0);
+}
+
+// Search for a user by name (for adding friends)
+async function searchUsers(query){
+  if(!cloudReady || !query) return [];
+  const { data } = await sb.from('profiles').select('id, display_name').ilike('display_name', '%'+query+'%').neq('id', currentUser.id).limit(10);
+  return (data||[]).map(p=>({ id:p.id, name:p.display_name||'User' }));
+}
+
+async function addFriendCloud(friendId){
+  if(!cloudReady) return;
+  await sb.from('friends').upsert({ user_id: currentUser.id, friend_id: friendId }, { onConflict:'user_id,friend_id' });
+}
+async function removeFriendCloud(friendId){
+  if(!cloudReady) return;
+  await sb.from('friends').delete().eq('user_id', currentUser.id).eq('friend_id', friendId);
+}
+
+// Fetch a user's habits + their completions for a given day (for profile view)
+async function fetchUserDay(userId, day){
+  const { data: habits } = await sb.from('habits').select('*').eq('user_id', userId).order('sort_order');
+  const { data: comps } = await sb.from('completions').select('*').eq('user_id', userId).eq('day', day);
+  const compMap = {}; (comps||[]).forEach(c=>compMap[c.habit_id]={mult:c.multiplier});
+  return { habits:(habits||[]).map(h=>({id:h.id,name:h.name,pts:h.points,cat:h.category})), compMap };
+}
+
+// Fetch a user's per-day points for a whole month (for profile calendar)
+async function fetchUserMonth(userId, year, month){
+  const first = new Date(year, month, 1).toISOString().slice(0,10);
+  const last = new Date(year, month+1, 0).toISOString().slice(0,10);
+  const { data: comps } = await sb.from('completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', first).lte('day', last);
+  const { data: habits } = await sb.from('habits').select('id, points').eq('user_id', userId);
+  const ptsMap = {}; (habits||[]).forEach(h=>ptsMap[h.id]=h.points);
+  const byDay = {};
+  (comps||[]).forEach(c=>{ byDay[c.day]=(byDay[c.day]||0)+(ptsMap[c.habit_id]||0)*c.multiplier; });
+  const counts = {};
+  (comps||[]).forEach(c=>{ counts[c.day]=(counts[c.day]||0)+1; });
+  return { byDay, counts, totalHabits:(habits||[]).length };
 }
 
 
@@ -983,12 +1072,7 @@ function changeDay(delta){
 
 // Mock: random friend who has shared this habit
 function mockSharedTag(habitId){
-  // Determinstic-ish: use habit id to pick a friend so it doesn't jump around
-  if(habitId%4===0){
-    const f = friendsMock[habitId%friendsMock.length];
-    return f;
-  }
-  return null;
+  return null; // Disabled — real shared-habit indicators come in a later update
 }
 
 function render(){
@@ -1026,13 +1110,13 @@ function render(){
       const sharedFriend = mockSharedTag(h.id);
       return `<div class="habit-wrap" data-id="${h.id}">
         <div class="habit-swipe-bg delete">
-          <div class="tap-zone" onclick="deleteHabitNow(${h.id})">
+          <div class="tap-zone" onclick="deleteHabitNow('${h.id}')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
             Delete
           </div>
         </div>
         <div class="habit-swipe-bg reset">
-          <div class="tap-zone" onclick="resetHabit(${h.id})">
+          <div class="tap-zone" onclick="resetHabit('${h.id}')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             Reset
           </div>
@@ -1069,7 +1153,7 @@ function attachHabitHandlers(){
   document.querySelectorAll('.habit-wrap').forEach(wrap=>{
     const habit = wrap.querySelector('.habit');
     const handle = wrap.querySelector('.drag-handle');
-    const id = parseInt(wrap.dataset.id);
+    const id = wrap.dataset.id;
     let startX=0,startY=0,curX=0,curY=0,active=false,axis=null;
     let startTarget=null;
     let isHeldOpen=false;
@@ -1320,29 +1404,38 @@ function goToDay(ds){
 }
 
 // ====== FRIENDS + GROUPS + FEED ======
-function renderFriends(){
-  // Feed
-  document.getElementById('feed-list').innerHTML = state.feed.slice(0,6).map(f=>`
-    <div class="feed-item">
-      <div class="avatar" style="background:${f.bg};color:${f.fg}">${f.initials}</div>
-      <div class="feed-text"><strong>${f.who}</strong> ${f.text}<span class="feed-time">${f.time}</span></div>
-    </div>`).join('');
+async function renderFriends(){
+  // Load real friends from cloud
+  await loadFriends();
 
-  // Friends — only show ADDED friends
-  const myFriends = friendsMock.filter(f=>state.friends.includes(f.name));
-  const friendsEl = document.getElementById('friends-list');
-  if(myFriends.length===0){
-    friendsEl.innerHTML = `<div class="empty" style="padding:24px 20px;font-size:13px">No friends yet. Tap <strong>+ Add friend</strong> above to start building your list.</div>`;
-  } else {
-    friendsEl.innerHTML = myFriends.map(f=>`
-      <div class="friend-card">
-        <div class="friend-top" style="cursor:pointer" onclick="openProfile('${f.name.replace(/'/g,"\\'")}','friends')">
+  // Feed — hide the mock feed for now (real activity feed is a later feature)
+  const feedEl = document.getElementById('feed-list');
+  if(feedEl){
+    if(cloudFriends.length===0){
+      feedEl.innerHTML = `<div class="empty" style="padding:16px 20px;font-size:13px">Add friends to see their activity here.</div>`;
+    } else {
+      // Simple real activity: show each friend's points today
+      feedEl.innerHTML = cloudFriends.map(f=>`
+        <div class="feed-item">
           <div class="avatar" style="background:${f.bg};color:${f.fg}">${f.initials}</div>
-          <div style="flex:1"><div class="friend-name">${f.name}</div><div class="friend-time">+${f.pts} pts today · tap to view</div></div>
+          <div class="feed-text"><strong>${f.name}</strong> earned <strong>${f.todayPts} pts</strong> today<span class="feed-time">this week: ${f.weekPts} pts</span></div>
+        </div>`).join('');
+    }
+  }
+
+  // Friends list — real
+  const friendsEl = document.getElementById('friends-list');
+  if(cloudFriends.length===0){
+    friendsEl.innerHTML = `<div class="empty" style="padding:24px 20px;font-size:13px">No friends yet. Tap <strong>+ Add friend</strong> above and search for them by name.</div>`;
+  } else {
+    friendsEl.innerHTML = cloudFriends.map(f=>`
+      <div class="friend-card">
+        <div class="friend-top" style="cursor:pointer" onclick="openProfile('${f.id}','friends')">
+          <div class="avatar" style="background:${f.bg};color:${f.fg}">${f.initials}</div>
+          <div style="flex:1"><div class="friend-name">${f.name}</div><div class="friend-time">+${f.todayPts} pts today · tap to view</div></div>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="color:var(--muted)"><polyline points="9 18 15 12 9 6"/></svg>
         </div>
-        <div class="friend-tasks">${f.tasks.map(t=>`<span class="ftask">${t}</span>`).join('')}</div>
-        <button class="view-list-btn" onclick="viewFriendList('${f.name.replace(/'/g,"\\'")}')">View their list →</button>
+        <button class="view-list-btn" onclick="viewFriendList('${f.id}')">View their list →</button>
       </div>`).join('');
   }
 
@@ -1373,28 +1466,22 @@ function renderFriends(){
   updateShareLink();
 }
 
-function viewFriendList(friendName){
-  // Mock visit: build a fake list from friend's tasks
-  const f = friendsMock.find(x=>x.name===friendName);
-  if(!f) return;
-  const matched = f.tasks.map(t=>{
-    const existing = state.habits.find(h=>h.name===t);
-    return existing ? {...existing} : {name:t,pts:50,cat:'other'};
-  });
-  // Add a few extras to make it interesting
-  const extras = state.habits.slice(0,5).filter(h=>!matched.find(m=>m.name===h.name)).map(h=>({...h}));
-  visitingList = {name:friendName, habits:[...matched,...extras].map(({id,...rest})=>rest)};
+async function viewFriendList(friendId){
+  const friend = cloudFriends.find(f=>f.id===friendId);
+  if(!friend) return;
+  const { habits } = await fetchUserDay(friendId, TODAY);
+  visitingList = {name:friend.name, friendId, habits: habits.map(({id,...rest})=>rest)};
   switchTab('visit');
   renderVisit();
 }
 
 // ====== ADD FRIENDS ======
 function openAddFriend(){
-  // Invite link
-  const link = `${window.location.origin}${window.location.pathname}?friend=${encodeURIComponent(state.name||'A friend')}`;
+  const link = `${window.location.origin}${window.location.pathname}`;
   document.getElementById('friend-invite-url').textContent = link;
   window._friendInviteLink = link;
-  renderSuggestedFriends();
+  document.getElementById('friend-search-in').value = '';
+  document.getElementById('friend-search-results').innerHTML = '';
   document.getElementById('add-friend-modal').classList.add('open');
 }
 function closeAddFriend(){
@@ -1403,46 +1490,58 @@ function closeAddFriend(){
 }
 function copyFriendInvite(){
   if(window._friendInviteLink){
-    navigator.clipboard.writeText(window._friendInviteLink).then(()=>showToast('Invite link copied!')).catch(()=>prompt('Copy:',window._friendInviteLink));
-  }
-}
-function renderSuggestedFriends(){
-  const notAdded = friendsMock.filter(f=>!state.friends.includes(f.name));
-  const el = document.getElementById('suggested-friends');
-  if(notAdded.length===0){
-    el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">You\'ve added everyone! 🎉</div>';
-    return;
-  }
-  el.innerHTML = notAdded.map(f=>`
-    <div class="suggested-friend">
-      <div class="avatar" style="background:${f.bg};color:${f.fg};width:34px;height:34px;font-size:12px">${f.initials}</div>
-      <span class="member-name" style="flex:1">${f.name}</span>
-      <button class="add-friend-btn" onclick="addFriend('${f.name.replace(/'/g,"\\'")}')">Add</button>
-    </div>`).join('');
-}
-function addFriend(name){
-  if(!state.friends.includes(name)){
-    state.friends.push(name);
-    saveState();
-    showToast(`${name} added to friends!`);
-    renderSuggestedFriends();
+    navigator.clipboard.writeText(window._friendInviteLink).then(()=>showToast('App link copied!')).catch(()=>prompt('Copy:',window._friendInviteLink));
   }
 }
 
+let _searchTimer = null;
+function onFriendSearch(){
+  clearTimeout(_searchTimer);
+  const q = document.getElementById('friend-search-in').value.trim();
+  const el = document.getElementById('friend-search-results');
+  if(!q){ el.innerHTML=''; return; }
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">Searching…</div>';
+  _searchTimer = setTimeout(async ()=>{
+    const results = await searchUsers(q);
+    const myFriendIds = cloudFriends.map(f=>f.id);
+    if(results.length===0){
+      el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">No one found with that name. They may need to sign up first.</div>';
+      return;
+    }
+    el.innerHTML = results.map(u=>{
+      const c = colorFor(u.name);
+      const already = myFriendIds.includes(u.id);
+      return `<div class="suggested-friend">
+        <div class="avatar" style="background:${c.bg};color:${c.fg};width:34px;height:34px;font-size:12px">${initialsOf(u.name)}</div>
+        <span class="member-name" style="flex:1">${u.name}</span>
+        <button class="add-friend-btn${already?' added':''}" ${already?'disabled':''} onclick="addFriend('${u.id}','${u.name.replace(/'/g,"\\'")}',this)">${already?'✓ Added':'Add'}</button>
+      </div>`;
+    }).join('');
+  }, 350);
+}
+
+async function addFriend(friendId, name, btn){
+  await addFriendCloud(friendId);
+  if(btn){ btn.textContent='✓ Added'; btn.classList.add('added'); btn.disabled=true; }
+  showToast(`${name} added!`);
+  await loadFriends();
+}
+
 let groupInviteSelection = new Set();
-function openGroupModal(){
+async function openGroupModal(){
   document.getElementById('group-name-in').value='';
   pickedEmoji = groupEmojis[0];
   groupInviteSelection = new Set();
   document.getElementById('emoji-picker').innerHTML = groupEmojis.map(e=>`<button class="emoji-pick${e===pickedEmoji?' selected':''}" onclick="pickEmoji('${e}',this)">${e}</button>`).join('');
-  renderGroupInviteFriends();
   document.getElementById('group-modal').classList.add('open');
+  await loadFriends();
+  renderGroupInviteFriends();
 }
 function renderGroupInviteFriends(){
   const el = document.getElementById('group-invite-friends');
-  const myFriends = friendsMock.filter(f=>state.friends.includes(f.name));
+  const myFriends = cloudFriends;
   if(myFriends.length===0){
-    el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:6px 0">No friends added yet. You can add them now or invite later via link.</div>`;
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:6px 0">No friends added yet. Add friends first, then create a group.</div>`;
     return;
   }
   el.innerHTML = myFriends.map(f=>`
@@ -1473,7 +1572,7 @@ function createGroup(){
   const name = document.getElementById('group-name-in').value.trim();
   if(!name){showToast('Give your group a name');return}
   const id = 'g_'+Date.now();
-  const invitedMembers = friendsMock.filter(f=>groupInviteSelection.has(f.name));
+  const invitedMembers = cloudFriends.filter(f=>groupInviteSelection.has(f.name));
   const seedMembers = [
     {name:'You',initials:'YO',bg:'#1a9e6e',fg:'#fff',pts:dayPts(TODAY)},
     ...invitedMembers
@@ -1573,39 +1672,32 @@ function renderVisit(){
   }).join('');
 }
 
-function addOneFromVisit(idx){
+async function addOneFromVisit(idx){
   const h = visitingList.habits[idx];
   if(state.habits.find(x=>x.name===h.name)){showToast('Already on your list');return}
-  state.habits.push({...h,id:state.nextId++});
+  let id = await cloudAddHabit(h);
+  if(!id) id = 'local_'+Date.now();
+  state.habits.push({...h,id});
+  if(state.order) state.order.push(id);
   saveState();
-  // Add to feed (mock notify)
-  state.feed.unshift({
-    who:'You',initials:'YO',bg:'#1a9e6e',fg:'#fff',
-    text:`added <strong>${h.name}</strong> from ${visitingList.name}'s list`,
-    time:'just now'
-  });
-  saveState();
-  showToast(`Added! ${visitingList.name} was notified ✨`);
+  showToast(`Added ${h.name}!`);
   renderVisit();
 }
 
-function addWholeVisitList(){
+async function addWholeVisitList(){
   let added=0;
-  visitingList.habits.forEach(h=>{
+  for(const h of visitingList.habits){
     if(!state.habits.find(x=>x.name===h.name)){
-      state.habits.push({...h,id:state.nextId++});
+      let id = await cloudAddHabit(h);
+      if(!id) id = 'local_'+Date.now()+'_'+added;
+      state.habits.push({...h,id});
+      if(state.order) state.order.push(id);
       added++;
     }
-  });
+  }
   saveState();
   if(added>0){
-    state.feed.unshift({
-      who:'You',initials:'YO',bg:'#1a9e6e',fg:'#fff',
-      text:`copied ${added} habit${added!==1?'s':''} from <strong>${visitingList.name}</strong>'s list`,
-      time:'just now'
-    });
-    saveState();
-    showToast(`Added ${added} habits! ${visitingList.name} was notified ✨`);
+    showToast(`Added ${added} habit${added!==1?'s':''}!`);
   } else {
     showToast('You already have all of these!');
   }
@@ -1621,29 +1713,45 @@ function exitVisit(){
 }
 
 // ====== LEADERBOARD ======
-function renderLB(){
+async function renderLB(){
   const tabs = [{id:'all',name:'All friends'},...state.groups.map(g=>({id:g.id,name:g.emoji+' '+g.name}))];
   document.getElementById('lb-tabs').innerHTML = tabs.map(t=>`<button class="lb-tab${t.id===activeLbTab?' active':''}" onclick="setLbTab('${t.id}')">${t.name}</button>`).join('');
 
+  document.getElementById('lb-list').innerHTML = '<div class="empty" style="font-size:13px">Loading…</div>';
+
+  // Make sure friends are loaded
+  await loadFriends();
+
+  // My points this week
+  const myWeek = await userPointsBetween(currentUser.id, WEEK_AGO, TODAY);
+
   let rows;
   if(activeLbTab==='all'){
-    const myFriends = friendsMock.filter(f=>state.friends.includes(f.name));
-    rows = [...myFriends.map(f=>({name:f.name,pts:f.pts*5+Math.floor(Math.random()*50),you:false})),{name:'You',pts:dayPts(TODAY)*5||50,you:true}];
+    rows = [
+      ...cloudFriends.map(f=>({id:f.id, name:f.name, pts:f.weekPts, you:false})),
+      {id:currentUser.id, name:(state.name||'You'), pts:myWeek, you:true}
+    ];
   } else {
     const g = state.groups.find(x=>x.id===activeLbTab);
     if(!g){activeLbTab='all';return renderLB()}
-    rows = (g.members||[]).map(m=>({name:m.name,pts:(m.pts||0)*5+Math.floor(Math.random()*40),you:m.name==='You'}));
+    // Group members that match cloud friends, plus me
+    rows = [{id:currentUser.id, name:(state.name||'You'), pts:myWeek, you:true}];
+    for(const m of (g.members||[])){
+      if(m.name==='You') continue;
+      const cf = cloudFriends.find(f=>f.name===m.name);
+      rows.push({ id:cf?cf.id:null, name:m.name, pts:cf?cf.weekPts:0, you:false });
+    }
   }
   rows.sort((a,b)=>b.pts-a.pts);
-  const max = rows[0]?rows[0].pts:1;
+  const max = rows[0]&&rows[0].pts>0 ? rows[0].pts : 1;
   let listHtml = rows.map((r,i)=>`
-    <div class="lb-row${r.you?' you':''}" ${r.you?'':`onclick="openProfile('${r.name.replace(/'/g,"\\'")}','lb')"`} style="${r.you?'':'cursor:pointer'}">
+    <div class="lb-row${r.you?' you':''}" ${(!r.you&&r.id)?`onclick="openProfile('${r.id}','lb')"`:''} style="${(!r.you&&r.id)?'cursor:pointer':''}">
       <span class="lb-rank">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</span>
       <span class="lb-name">${r.name}${r.you?'<span class="you-chip">you</span>':''}</span>
       <div class="lb-bar-wrap"><div class="lb-bar" style="width:${Math.round(r.pts/max*100)}%"></div></div>
       <span class="lb-pts">${r.pts}</span>
     </div>`).join('');
-  if(activeLbTab==='all' && rows.length<=1){
+  if(activeLbTab==='all' && cloudFriends.length===0){
     listHtml += `<div class="empty" style="font-size:13px">Add friends to see them ranked here. Go to the Friends tab → + Add friend.</div>`;
   }
   document.getElementById('lb-list').innerHTML = listHtml;
@@ -1651,52 +1759,35 @@ function renderLB(){
 
 function setLbTab(id){activeLbTab=id;renderLB()}
 
-// ====== FRIEND PROFILES ======
-let profileFriend = null;        // {name, initials, bg, fg}
-let profileViewDate = TODAY;     // which day we're viewing for this friend
+// ====== FRIEND PROFILES (real cloud data) ======
+let profileFriend = null;        // {id, name, initials, bg, fg}
+let profileViewDate = TODAY;
 let profileCalMonth = new Date();
 let profileFromTab = 'lb';
+let profileDayCache = {};        // day -> {habits, compMap}
+let profileMonthCache = {};      // 'y-m' -> {byDay, counts, totalHabits}
 
-// Deterministic pseudo-random for mock friend completions
-function hashStr(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0}return Math.abs(h)}
-function mockFriendCompletions(friendName, dateStr){
-  // Future dates → empty
-  if(dateStr > TODAY) return [];
-  const seed = hashStr(friendName + dateStr);
-  const habits = state.habits;
-  if(habits.length===0) return [];
-  // Pick a count between 4 and habits.length-2
-  const targetCount = 4 + (seed % Math.max(1, habits.length - 4));
-  // Shuffle deterministically
-  const arr = habits.map((h,i)=>({h, key:(seed*31 + i*1103515245)|0}));
-  arr.sort((a,b)=>a.key-b.key);
-  const picked = arr.slice(0,targetCount);
-  // Spread completion times across the day
-  return picked.map((p,i)=>({
-    id:p.h.id,
-    mult: (seed + i) % 7 === 0 ? 2 : 1,
-    completedAt: i * 1000
-  }));
-}
-function mockFriendDayPts(friendName, dateStr){
-  const comps = mockFriendCompletions(friendName, dateStr);
-  return comps.reduce((s,c)=>{
-    const h = state.habits.find(x=>x.id===c.id);
-    return s + (h?h.pts*c.mult:0);
-  },0);
-}
-
-function openProfile(name, fromTab){
-  // Find friend mock data
-  let friend = friendsMock.find(f=>f.name===name);
+function openProfile(userId, fromTab){
+  let friend = cloudFriends.find(f=>f.id===userId);
   if(!friend){
-    // build from initials/colors
-    friend = {name, initials:name.slice(0,2).toUpperCase(), bg:'#ccc', fg:'#000'};
+    // Could be a non-friend (e.g. group member). Build a placeholder; fetch name.
+    friend = { id:userId, name:'Loading…', initials:'?', bg:'#ccc', fg:'#000' };
+    sb.from('profiles').select('display_name').eq('id', userId).single().then(({data})=>{
+      if(data && profileFriend && profileFriend.id===userId){
+        const c = colorFor(data.display_name||'User');
+        profileFriend.name = data.display_name||'User';
+        profileFriend.initials = initialsOf(data.display_name);
+        profileFriend.bg = c.bg; profileFriend.fg = c.fg;
+        renderProfile();
+      }
+    });
   }
-  profileFriend = friend;
+  profileFriend = {...friend};
   profileFromTab = fromTab || 'lb';
   profileViewDate = TODAY;
   profileCalMonth = new Date();
+  profileDayCache = {};
+  profileMonthCache = {};
   switchTab('profile');
   renderProfile();
 }
@@ -1707,65 +1798,57 @@ function exitProfile(){
   switchTab(back);
 }
 
-function renderProfile(){
+async function renderProfile(){
   if(!profileFriend) return;
   const f = profileFriend;
-  const comps = mockFriendCompletions(f.name, profileViewDate);
-  const pts = mockFriendDayPts(f.name, profileViewDate);
-  // Compute weekly pts (7 days back)
-  let weeklyPts=0;
-  const wd = new Date(profileViewDate+'T00:00:00');
-  for(let i=0;i<7;i++){
-    const d = new Date(wd);d.setDate(d.getDate()-i);
-    weeklyPts += mockFriendDayPts(f.name, d.toISOString().slice(0,10));
-  }
 
+  // Header (immediately, with whatever we have)
   document.getElementById('profile-header').innerHTML = `
     <div class="profile-avatar-lg" style="background:${f.bg};color:${f.fg}">${f.initials}</div>
     <div class="profile-name-block">
       <h1>${f.name}</h1>
       <div class="profile-sub">Tap any day to view their habits</div>
-    </div>
-  `;
+    </div>`;
+
+  // Fetch the day's data (cached)
+  if(!profileDayCache[profileViewDate]){
+    profileDayCache[profileViewDate] = await fetchUserDay(f.id, profileViewDate);
+  }
+  const { habits, compMap } = profileDayCache[profileViewDate];
+
+  // Day points + week points
+  const dayPtsVal = habits.reduce((s,h)=> s + (compMap[h.id]? h.pts*compMap[h.id].mult : 0), 0);
+  const weekPts = await userPointsBetween(f.id, (()=>{const d=new Date(profileViewDate+'T00:00:00');d.setDate(d.getDate()-6);return d.toISOString().slice(0,10);})(), profileViewDate);
+
   document.getElementById('profile-stats').innerHTML = `
     <div class="profile-stat-block">
       <div class="profile-stat-label">Points · ${profileViewDate===TODAY?'today':formatProfileDate()}</div>
-      <div class="profile-stat-num">${pts}</div>
+      <div class="profile-stat-num">${dayPtsVal}</div>
     </div>
     <div class="profile-stat-block">
       <div class="profile-stat-label">Past 7 days</div>
-      <div class="profile-stat-num">${weeklyPts}</div>
-    </div>
-  `;
+      <div class="profile-stat-num">${weekPts}</div>
+    </div>`;
   document.getElementById('profile-day-label').textContent = profileViewDate===TODAY?"Today's checklist":formatProfileDate()+"'s checklist";
 
-  const compMap = new Map(comps.map(c=>[c.id,c]));
-  // Show: completed first, then unchecked (lighter)
-  const completed = comps.map(c=>state.habits.find(h=>h.id===c.id)).filter(Boolean);
-  const completedIds = new Set(completed.map(h=>h.id));
-  const uncompleted = state.habits.filter(h=>!completedIds.has(h.id));
+  // Checklist: completed first, then unchecked dimmed
+  const completed = habits.filter(h=>compMap[h.id]);
+  const uncompleted = habits.filter(h=>!compMap[h.id]);
   const checklistHtml = [
     ...completed.map(h=>{
-      const c = compMap.get(h.id);
-      const mult = c.mult;
+      const mult = compMap[h.id].mult;
       return `<div class="read-only-habit done" data-cat="${h.cat}">
         <div class="habit-check done-look">
           <svg viewBox="0 0 14 14" fill="none"><polyline points="2,7 6,11 12,3" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           ${mult>1?`<span class="mult-badge">×${mult}</span>`:''}
         </div>
-        <div class="habit-body">
-          <div class="habit-name">${h.name}</div>
-          <div class="habit-meta-row"><span class="habit-cat">${h.cat}</span></div>
-        </div>
+        <div class="habit-body"><div class="habit-name">${h.name}</div><div class="habit-meta-row"><span class="habit-cat">${h.cat}</span></div></div>
         <span class="habit-pts">+${h.pts*mult} pts</span>
       </div>`;
     }),
     ...uncompleted.map(h=>`<div class="read-only-habit" data-cat="${h.cat}" style="opacity:.55">
       <div class="habit-check"><svg viewBox="0 0 14 14" fill="none"><polyline points="2,7 6,11 12,3" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div class="habit-body">
-        <div class="habit-name">${h.name}</div>
-        <div class="habit-meta-row"><span class="habit-cat">${h.cat}</span></div>
-      </div>
+      <div class="habit-body"><div class="habit-name">${h.name}</div><div class="habit-meta-row"><span class="habit-cat">${h.cat}</span></div></div>
       <span class="habit-pts">${h.pts} pts</span>
     </div>`)
   ].join('');
@@ -1783,26 +1866,31 @@ function formatProfileDate(){
   return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
 
-function renderProfileCalendar(){
+async function renderProfileCalendar(){
   const grid = document.getElementById('profile-cal-grid');
   const label = document.getElementById('profile-cal-month-label');
   const y=profileCalMonth.getFullYear(), m=profileCalMonth.getMonth();
   label.textContent=profileCalMonth.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const cacheKey = y+'-'+m;
+  if(!profileMonthCache[cacheKey]){
+    grid.innerHTML='<div style="grid-column:1/8;text-align:center;color:var(--muted);font-size:12px;padding:10px">Loading…</div>';
+    profileMonthCache[cacheKey] = await fetchUserMonth(profileFriend.id, y, m);
+  }
+  const { byDay, counts, totalHabits } = profileMonthCache[cacheKey];
   const first=new Date(y,m,1);
   const last=new Date(y,m+1,0);
   const startDow=first.getDay();
-  const total = state.habits.length;
   let html='';
   for(let d=1;d<=last.getDate();d++){
     const ds = new Date(y,m,d).toISOString().slice(0,10);
-    const pts = mockFriendDayPts(profileFriend.name, ds);
-    const compCount = mockFriendCompletions(profileFriend.name, ds).length;
+    const pts = byDay[ds]||0;
+    const compCount = counts[ds]||0;
     const isToday = ds===TODAY;
     const isSelected = ds===profileViewDate;
     let cls='cal-day';
     if(isToday) cls+=' today';
-    if(pts>0 && compCount<total) cls+=' has-pts';
-    if(pts>0 && compCount>=total) cls+=' perfect';
+    if(pts>0 && compCount<totalHabits) cls+=' has-pts';
+    if(pts>0 && totalHabits>0 && compCount>=totalHabits) cls+=' perfect';
     if(isSelected) cls+=' selected';
     const colStart = d===1 ? `style="grid-column-start:${startDow+1}"` : '';
     html+=`<div class="${cls}" ${colStart} onclick="selectProfileDay('${ds}')"><div>${d}</div>${pts>0?`<div class="cal-day-pts">${pts}</div>`:''}</div>`;
