@@ -611,16 +611,40 @@ async function signOut(){
 
 // On load: check if logged in
 async function initAuth(){
-  const { data: { session } } = await sb.auth.getSession();
-  if(session && session.user){
-    currentUser = session.user;
-    await onLoggedIn();
-  } else {
-    // Not logged in — show login screen
+  try{
+    const { data: { session } } = await sb.auth.getSession();
+    if(session && session.user){
+      currentUser = session.user;
+      await onLoggedIn();
+    } else {
+      // Not logged in — show login screen
+      document.getElementById('boot-loading').style.display='none';
+      document.getElementById('login-screen').style.display='flex';
+    }
+  }catch(err){
+    console.error('initAuth failed', err);
+    // Fall through to login screen so user isn't stuck
     document.getElementById('boot-loading').style.display='none';
     document.getElementById('login-screen').style.display='flex';
+    alert('Could not connect. Try refreshing. ('+(err && err.message ? err.message : err)+')');
   }
 }
+
+// Safety net: if anything jams the boot screen for >12s, force the app open
+setTimeout(()=>{
+  const boot = document.getElementById('boot-loading');
+  if(boot && boot.style.display !== 'none'){
+    boot.style.display='none';
+    const login = document.getElementById('login-screen');
+    const app = document.getElementById('app');
+    if(currentUser){
+      if(app) app.style.display='block';
+      try{ render(); }catch(e){ console.error(e); }
+    } else {
+      if(login) login.style.display='flex';
+    }
+  }
+}, 12000);
 
 // React to auth changes (e.g. clicking magic link)
 sb.auth.onAuthStateChange(async (event, session) => {
@@ -632,27 +656,33 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
 async function onLoggedIn(){
   cloudReady = true;
-  // Save pending name to profile if we have one
-  const pendingName = localStorage.getItem('streakly_pending_name');
-  if(pendingName){
-    await sb.from('profiles').update({ display_name: pendingName }).eq('id', currentUser.id);
-    localStorage.removeItem('streakly_pending_name');
+  try{
+    // Save pending name to profile if we have one
+    const pendingName = localStorage.getItem('streakly_pending_name');
+    if(pendingName){
+      await sb.from('profiles').update({ display_name: pendingName }).eq('id', currentUser.id);
+      localStorage.removeItem('streakly_pending_name');
+    }
+    // Load my display name from profile
+    const { data: myProfile } = await sb.from('profiles').select('display_name').eq('id', currentUser.id).single();
+    if(myProfile && myProfile.display_name){ state.name = myProfile.display_name; saveStateLocal(); }
+    // Load this user's cloud data into local state
+    await loadFromCloud();
+  }catch(err){
+    console.error('onLoggedIn step failed (continuing with local data)', err);
   }
-  // Load my display name from profile
-  const { data: myProfile } = await sb.from('profiles').select('display_name').eq('id', currentUser.id).single();
-  if(myProfile && myProfile.display_name){ state.name = myProfile.display_name; saveStateLocal(); }
-  // Load this user's cloud data into local state
-  await loadFromCloud();
-  // Show the app
+  // Show the app no matter what
   document.getElementById('boot-loading').style.display='none';
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='block';
-  if(visitingList){
-    switchTab('visit');
-    renderVisit();
-  } else {
-    render();
-  }
+  try{
+    if(visitingList){
+      switchTab('visit');
+      renderVisit();
+    } else {
+      render();
+    }
+  }catch(err){ console.error('Initial render failed', err); }
 }
 
 // ====== CLOUD SYNC ======
