@@ -593,7 +593,7 @@ async function sendMagicLink(){
   const { error } = await sb.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: 'https://streakly-app.vercel.app',
+      emailRedirectTo: 'https://streakly-app-vert.vercel.app',
       data: { display_name: name }
     }
   });
