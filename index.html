@@ -85,8 +85,8 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 
 .habit{background:var(--card);border:1.5px solid var(--border);border-left-width:4px;border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;gap:12px;transition:transform .25s cubic-bezier(.4,0,.2,1),background .2s,border-color .2s;cursor:pointer;-webkit-user-select:none;user-select:none;position:relative;z-index:1;touch-action:pan-y}
 .habit.swiping{transition:none}
-.habit.held-open{transform:translateX(-110px)}
-.habit.held-open-right{transform:translateX(110px)}
+.habit.held-open{transform:translateX(-110px);pointer-events:none}
+.habit.held-open-right{transform:translateX(110px);pointer-events:none}
 .habit[data-cat=mind]{border-left-color:var(--cat-mind)}
 .habit[data-cat=body]{border-left-color:var(--cat-body)}
 .habit[data-cat=health]{border-left-color:var(--cat-health)}
@@ -295,8 +295,10 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 .member-remove:hover{background:#FBE6E6}
 
 /* TOAST */
-.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--text);color:#fff;font-size:13px;font-weight:500;padding:10px 20px;border-radius:99px;z-index:999;transition:transform .3s cubic-bezier(.4,0,.2,1);white-space:nowrap;font-family:'DM Sans',sans-serif;max-width:90vw;text-overflow:ellipsis;overflow:hidden}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--text);color:#fff;font-size:13px;font-weight:500;padding:10px 16px;border-radius:99px;z-index:999;transition:transform .3s cubic-bezier(.4,0,.2,1);font-family:'DM Sans',sans-serif;max-width:90vw;display:flex;align-items:center;gap:12px}
 .toast.show{transform:translateX(-50%) translateY(0)}
+.toast .toast-action{background:rgba(255,255,255,.18);color:#fff;border:none;font-family:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;cursor:pointer;letter-spacing:.3px}
+.toast .toast-action:active{background:rgba(255,255,255,.32)}
 
 /* EMPTY */
 .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:14px}
@@ -691,7 +693,7 @@ async function onLoggedIn(){
 // If the user has no cloud habits yet (first login), seeds with defaults.
 async function loadFromCloud(){
   try{
-    const { data: habits } = await sb.from('habits').select('*').eq('user_id', currentUser.id).order('sort_order');
+    let { data: habits } = await sb.from('habits').select('*').eq('user_id', currentUser.id).order('sort_order').order('created_at');
     const { data: comps } = await sb.from('completions').select('*').eq('user_id', currentUser.id);
 
     if(!habits || habits.length === 0){
@@ -700,15 +702,46 @@ async function loadFromCloud(){
         user_id: currentUser.id, name: h.name, points: h.pts, category: h.cat, sort_order: i
       }));
       const { data: inserted } = await sb.from('habits').insert(seed).select();
-      state.habits = (inserted||[]).map(h=>({ id:h.id, name:h.name, pts:h.points, cat:h.category }));
-      state.order = state.habits.map(h=>h.id);
+      habits = inserted || [];
     } else {
-      state.habits = habits.map(h=>({ id:h.id, name:h.name, pts:h.points, cat:h.category }));
-      state.order = habits.map(h=>h.id);
+      // Deduplicate: if there are multiple habits with the same name,
+      // keep the oldest (lowest created_at) and delete the rest from the cloud.
+      const seenByName = new Map();
+      const duplicates = [];
+      for(const h of habits){
+        const key = (h.name||'').trim().toLowerCase();
+        if(seenByName.has(key)){
+          duplicates.push(h.id);
+        } else {
+          seenByName.set(key, h);
+        }
+      }
+      if(duplicates.length){
+        console.log('Removing', duplicates.length, 'duplicate habit(s) from cloud');
+        // Move any completions from duplicates onto the keeper, then delete duplicates
+        for(const h of habits){
+          if(!duplicates.includes(h.id)) continue;
+          const keeper = seenByName.get((h.name||'').trim().toLowerCase());
+          if(keeper){
+            // Re-point completions of this duplicate to the keeper
+            await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id);
+          }
+        }
+        await sb.from('habits').delete().in('id', duplicates);
+        habits = habits.filter(h=>!duplicates.includes(h.id));
+      }
     }
-    // Rebuild completions object {date:[{id,mult,completedAt}]}
+    state.habits = habits.map(h=>({ id:h.id, name:h.name, pts:h.points, cat:h.category }));
+    state.order = habits.map(h=>h.id);
+    // Rebuild completions object {date:[{id,mult,completedAt}]} — and dedupe per-day
     state.completions = {};
-    (comps||[]).forEach(c=>{
+    // Refetch completions in case we moved any onto the keeper
+    const { data: comps2 } = await sb.from('completions').select('*').eq('user_id', currentUser.id);
+    const seenComp = new Set(); // habit_id+day
+    (comps2||comps||[]).forEach(c=>{
+      const k = c.habit_id+'|'+c.day;
+      if(seenComp.has(k)) return;
+      seenComp.add(k);
       if(!state.completions[c.day]) state.completions[c.day] = [];
       state.completions[c.day].push({ id:c.habit_id, mult:c.multiplier, completedAt:new Date(c.completed_at).getTime() });
     });
@@ -1047,16 +1080,66 @@ async function addHabit(){
   showToast('Habit added!');
 }
 
-function deleteHabitNow(id){
+async function deleteHabitNow(id){
+  // Snapshot what we're deleting so we can undo
+  const deletedHabit = state.habits.find(h=>h.id===id);
+  if(!deletedHabit) return;
+  const deletedOrderIdx = state.order ? state.order.indexOf(id) : -1;
+  const deletedCompletions = {};
+  Object.keys(state.completions).forEach(d=>{
+    const c = state.completions[d].find(x=>x.id===id);
+    if(c) deletedCompletions[d] = {...c};
+  });
+
+  // Remove locally
   state.habits = state.habits.filter(h=>h.id!==id);
   Object.keys(state.completions).forEach(d=>{
     state.completions[d] = state.completions[d].filter(c=>c.id!==id);
   });
   if(state.order) state.order = state.order.filter(x=>x!==id);
-  cloudDeleteHabit(id);
   saveState();
   render();
-  showToast('Habit deleted');
+  // Remove from cloud
+  cloudDeleteHabit(id);
+
+  showToast(`Deleted "${deletedHabit.name}"`, {
+    actionLabel:'Undo',
+    duration:6000,
+    onAction: async ()=>{
+      // Re-insert at original position locally
+      state.habits.push(deletedHabit);
+      if(state.order){
+        if(deletedOrderIdx>=0 && deletedOrderIdx<=state.order.length) state.order.splice(deletedOrderIdx,0,id);
+        else state.order.push(id);
+      }
+      Object.keys(deletedCompletions).forEach(d=>{
+        if(!state.completions[d]) state.completions[d]=[];
+        state.completions[d].push(deletedCompletions[d]);
+      });
+      saveState();
+      // Re-create in cloud (gets a new UUID — update local id to match cloud)
+      const newId = await cloudAddHabit({name:deletedHabit.name, pts:deletedHabit.pts, cat:deletedHabit.cat});
+      if(newId){
+        // Replace the id everywhere
+        const idx = state.habits.findIndex(h=>h.id===id);
+        if(idx>=0) state.habits[idx].id = newId;
+        if(state.order){
+          const oi = state.order.indexOf(id);
+          if(oi>=0) state.order[oi] = newId;
+        }
+        Object.keys(state.completions).forEach(d=>{
+          state.completions[d] = state.completions[d].map(c=> c.id===id ? {...c,id:newId} : c);
+        });
+        // Restore completions in cloud too
+        for(const day of Object.keys(deletedCompletions)){
+          cloudSetCompletion(newId, day, deletedCompletions[day].mult);
+        }
+        saveState();
+      }
+      render();
+      showToast('Restored');
+    }
+  });
 }
 
 function toggleForm(){
@@ -1190,12 +1273,15 @@ function attachHabitHandlers(){
     let isHeldOpen=false;
 
     const closeHeldOpen=()=>{
-      if(isHeldOpen){
+      const wasOpen = habit.classList.contains('held-open') || habit.classList.contains('held-open-right');
+      if(wasOpen){
         habit.classList.remove('held-open','held-open-right');
+        habit.style.transform='';
         wrap.classList.remove('show-reset');
         isHeldOpen=false;
         return true;
       }
+      isHeldOpen=false;
       return false;
     };
 
@@ -1982,12 +2068,21 @@ function switchTab(tab){
   window.scrollTo(0,0);
 }
 
-function showToast(msg){
+function showToast(msg, opts){
   const t = document.getElementById('toast');
-  t.innerHTML = msg;
+  let html = `<span>${msg}</span>`;
+  if(opts && opts.actionLabel && typeof opts.onAction === 'function'){
+    // Stash handler on window; toast inner HTML calls it by name
+    window._toastAction = opts.onAction;
+    html += `<button class="toast-action" onclick="(window._toastAction&&window._toastAction());document.getElementById('toast').classList.remove('show')">${opts.actionLabel}</button>`;
+  } else {
+    window._toastAction = null;
+  }
+  t.innerHTML = html;
   t.classList.add('show');
   clearTimeout(window._toastT);
-  window._toastT = setTimeout(()=>t.classList.remove('show'), 2600);
+  const dur = opts && opts.duration ? opts.duration : 2600;
+  window._toastT = setTimeout(()=>t.classList.remove('show'), dur);
 }
 
 // Category filter
@@ -2011,6 +2106,18 @@ document.getElementById('add-friend-modal').addEventListener('click',e=>{
 });
 
 document.getElementById('in-name').addEventListener('keydown', e=>{if(e.key==='Enter') addHabit()});
+
+// Close any open swipe (held-open Delete/Reset) when tapping elsewhere on the page
+document.addEventListener('pointerdown', e=>{
+  // If the tap is on a habit action button (Delete/Reset), let it through.
+  if(e.target.closest('.habit-swipe-bg')) return;
+  document.querySelectorAll('.habit.held-open, .habit.held-open-right').forEach(h=>{
+    h.classList.remove('held-open','held-open-right');
+    h.style.transform='';
+    const wrap = h.closest('.habit-wrap');
+    if(wrap) wrap.classList.remove('show-reset');
+  });
+}, true);
 
 // ====== BOOT — go through auth first ======
 // Don't render immediately; initAuth() shows login or loads cloud data then renders.
