@@ -78,9 +78,12 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 .habit-swipe-bg{position:absolute;inset:0;display:flex;align-items:center;border-radius:var(--radius);pointer-events:none}
 .habit-swipe-bg.delete{background:var(--danger);justify-content:flex-end;padding-right:24px;color:#fff;font-weight:600;font-size:14px;gap:8px}
 .habit-swipe-bg.reset{background:#888880;justify-content:flex-start;padding-left:24px;color:#fff;font-weight:600;font-size:14px;gap:8px;display:none}
+.habit-swipe-bg.edit{background:#3b8bbf;justify-content:flex-start;padding-left:24px;color:#fff;font-weight:600;font-size:14px;gap:8px;display:none}
 .habit-swipe-bg svg{width:18px;height:18px}
 .habit-wrap.show-reset .habit-swipe-bg.reset{display:flex}
 .habit-wrap.show-reset .habit-swipe-bg.delete{display:none}
+.habit-wrap.show-edit .habit-swipe-bg.edit{display:flex}
+.habit-wrap.show-edit .habit-swipe-bg.delete{display:none}
 .habit-swipe-bg .tap-zone{pointer-events:auto;height:100%;display:flex;align-items:center;gap:8px;padding:0 24px;cursor:pointer}
 
 .habit{background:var(--card);border:1.5px solid var(--border);border-left-width:4px;border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;gap:12px;transition:transform .25s cubic-bezier(.4,0,.2,1),background .2s,border-color .2s;cursor:pointer;-webkit-user-select:none;user-select:none;position:relative;z-index:1;touch-action:pan-y}
@@ -407,6 +410,9 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
         <button class="btn-primary" onclick="addHabit()">Add habit</button>
         <button class="btn-ghost" onclick="toggleForm()">Cancel</button>
       </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);text-align:center">
+        <button class="btn-ghost" style="width:100%;font-size:12px;color:var(--muted)" onclick="cleanupDuplicates()">Remove duplicate habits</button>
+      </div>
     </div>
   </div>
   </div>
@@ -535,6 +541,26 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 </nav>
 
 <!-- ADD FRIEND MODAL -->
+<!-- EDIT HABIT MODAL -->
+<div class="modal-bg" id="edit-habit-modal">
+  <div class="modal">
+    <h2>Edit habit</h2>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Name</p>
+    <input type="text" id="edit-name" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:14px"/>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Points</p>
+    <input type="number" id="edit-pts" min="1" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:14px"/>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Category</p>
+    <select id="edit-cat" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:20px">
+      <option value="mind">🧠 Mind</option>
+      <option value="body">💪 Body</option>
+      <option value="health">💧 Health</option>
+      <option value="other">✨ Other</option>
+    </select>
+    <button class="btn-primary" style="margin-bottom:8px" onclick="saveEditHabit()">Save changes</button>
+    <button class="btn-ghost" style="width:100%" onclick="closeEditHabit()">Cancel</button>
+  </div>
+</div>
+
 <div class="modal-bg" id="add-friend-modal">
   <div class="modal">
     <h2>Add friends</h2>
@@ -704,12 +730,14 @@ async function loadFromCloud(){
       const { data: inserted } = await sb.from('habits').insert(seed).select();
       habits = inserted || [];
     } else {
-      // Deduplicate: if there are multiple habits with the same name,
-      // keep the oldest (lowest created_at) and delete the rest from the cloud.
+      // Deduplicate: if there are multiple habits with the same name (normalized),
+      // keep the oldest and delete the rest from the cloud.
+      const normalizeName = s => (s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
       const seenByName = new Map();
       const duplicates = [];
       for(const h of habits){
-        const key = (h.name||'').trim().toLowerCase();
+        const key = normalizeName(h.name);
+        if(!key) continue;
         if(seenByName.has(key)){
           duplicates.push(h.id);
         } else {
@@ -721,10 +749,9 @@ async function loadFromCloud(){
         // Move any completions from duplicates onto the keeper, then delete duplicates
         for(const h of habits){
           if(!duplicates.includes(h.id)) continue;
-          const keeper = seenByName.get((h.name||'').trim().toLowerCase());
+          const keeper = seenByName.get(normalizeName(h.name));
           if(keeper){
-            // Re-point completions of this duplicate to the keeper
-            await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id);
+            try{ await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
           }
         }
         await sb.from('habits').delete().in('id', duplicates);
@@ -760,6 +787,14 @@ async function cloudAddHabit(h){
 async function cloudDeleteHabit(id){
   if(!cloudReady) return;
   await sb.from('habits').delete().eq('id', id);
+}
+async function cloudUpdateHabit(id, fields){
+  if(!cloudReady) return;
+  const payload = {};
+  if(fields.name!==undefined) payload.name = fields.name;
+  if(fields.pts!==undefined) payload.points = fields.pts;
+  if(fields.cat!==undefined) payload.category = fields.cat;
+  await sb.from('habits').update(payload).eq('id', id);
 }
 async function cloudSaveOrder(){
   if(!cloudReady) return;
@@ -1080,6 +1115,87 @@ async function addHabit(){
   showToast('Habit added!');
 }
 
+// ====== EDIT HABIT ======
+let editingHabitId = null;
+
+// Manual cleanup if dedupe missed anything — run from the add-habit form
+async function cleanupDuplicates(){
+  if(!cloudReady){ alert('Not connected to cloud'); return; }
+  if(!confirm('This will remove duplicate habits with the same name, keeping the oldest copy and preserving its check history. Proceed?')) return;
+  showToast('Cleaning up…');
+  try{
+    let { data: habits } = await sb.from('habits').select('*').eq('user_id', currentUser.id).order('created_at');
+    const normalizeName = s => (s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    const seenByName = new Map();
+    const duplicates = [];
+    for(const h of (habits||[])){
+      const key = normalizeName(h.name);
+      if(!key) continue;
+      if(seenByName.has(key)){
+        duplicates.push(h);
+      } else {
+        seenByName.set(key, h);
+      }
+    }
+    if(duplicates.length === 0){
+      showToast('No duplicates found 👍');
+      return;
+    }
+    // Re-point completions
+    for(const h of duplicates){
+      const keeper = seenByName.get(normalizeName(h.name));
+      if(keeper){
+        try{ await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
+      }
+    }
+    await sb.from('habits').delete().in('id', duplicates.map(h=>h.id));
+    await loadFromCloud();
+    render();
+    showToast(`Removed ${duplicates.length} duplicate${duplicates.length!==1?'s':''}`);
+  }catch(e){
+    console.error(e);
+    alert('Cleanup failed: '+(e.message||e));
+  }
+}
+
+function openEditHabit(id){
+  const h = state.habits.find(x=>x.id===id);
+  if(!h) return;
+  editingHabitId = id;
+  document.getElementById('edit-name').value = h.name;
+  document.getElementById('edit-pts').value = h.pts;
+  document.getElementById('edit-cat').value = h.cat;
+  // Close any open swipe state
+  document.querySelectorAll('.habit.held-open, .habit.held-open-right').forEach(el=>{
+    el.classList.remove('held-open','held-open-right');
+    el.style.transform='';
+    const w = el.closest('.habit-wrap');
+    if(w) w.classList.remove('show-reset','show-edit');
+  });
+  document.getElementById('edit-habit-modal').classList.add('open');
+  setTimeout(()=>document.getElementById('edit-name').focus(), 50);
+}
+function closeEditHabit(){
+  editingHabitId = null;
+  document.getElementById('edit-habit-modal').classList.remove('open');
+}
+async function saveEditHabit(){
+  if(!editingHabitId) return;
+  const id = editingHabitId;
+  const name = document.getElementById('edit-name').value.trim();
+  const pts = parseInt(document.getElementById('edit-pts').value)||50;
+  const cat = document.getElementById('edit-cat').value;
+  if(!name){ alert('Name required'); return; }
+  const h = state.habits.find(x=>x.id===id);
+  if(!h) return;
+  h.name = name; h.pts = pts; h.cat = cat;
+  saveState();
+  cloudUpdateHabit(id, {name, pts, cat});
+  closeEditHabit();
+  render();
+  showToast('Habit updated');
+}
+
 async function deleteHabitNow(id){
   // Snapshot what we're deleting so we can undo
   const deletedHabit = state.habits.find(h=>h.id===id);
@@ -1235,6 +1351,12 @@ function render(){
             Reset
           </div>
         </div>
+        <div class="habit-swipe-bg edit">
+          <div class="tap-zone" onclick="openEditHabit('${h.id}')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit
+          </div>
+        </div>
         <div class="habit${isDone?' done':''}" data-cat="${h.cat}" data-id="${h.id}">
           <div class="habit-check">
             <svg viewBox="0 0 14 14" fill="none"><polyline points="2,7 6,11 12,3" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1277,7 +1399,7 @@ function attachHabitHandlers(){
       if(wasOpen){
         habit.classList.remove('held-open','held-open-right');
         habit.style.transform='';
-        wrap.classList.remove('show-reset');
+        wrap.classList.remove('show-reset','show-edit');
         isHeldOpen=false;
         return true;
       }
@@ -1316,10 +1438,16 @@ function attachHabitHandlers(){
       if(axis==='x'){
         const isDone=!!getCompletion(viewDate,id);
         if(dx<0){
-          wrap.classList.remove('show-reset');
+          wrap.classList.remove('show-reset','show-edit');
           habit.style.transform=`translateX(${Math.max(dx,-130)}px)`;
-        } else if(dx>0 && isDone){
-          wrap.classList.add('show-reset');
+        } else if(dx>0){
+          if(isDone){
+            wrap.classList.add('show-reset');
+            wrap.classList.remove('show-edit');
+          } else {
+            wrap.classList.add('show-edit');
+            wrap.classList.remove('show-reset');
+          }
           habit.style.transform=`translateX(${Math.min(dx,130)}px)`;
         }
       }
@@ -1334,10 +1462,11 @@ function attachHabitHandlers(){
       const totalMoved=Math.sqrt(dx*dx+dy*dy);
       if(axis==='x' && dx<-70){
         habit.classList.add('held-open'); isHeldOpen=true;
-      } else if(axis==='x' && dx>70 && getCompletion(viewDate,id)){
+      } else if(axis==='x' && dx>70){
         habit.classList.add('held-open-right'); isHeldOpen=true;
       } else {
         habit.style.transform='';
+        wrap.classList.remove('show-reset','show-edit');
         if(totalMoved<12){ handleTap(startTarget); }
       }
     };
@@ -2104,18 +2233,21 @@ document.getElementById('group-detail-modal').addEventListener('click',e=>{
 document.getElementById('add-friend-modal').addEventListener('click',e=>{
   if(e.target.id==='add-friend-modal') closeAddFriend();
 });
+document.getElementById('edit-habit-modal').addEventListener('click',e=>{
+  if(e.target.id==='edit-habit-modal') closeEditHabit();
+});
 
 document.getElementById('in-name').addEventListener('keydown', e=>{if(e.key==='Enter') addHabit()});
 
-// Close any open swipe (held-open Delete/Reset) when tapping elsewhere on the page
+// Close any open swipe (held-open Delete/Reset/Edit) when tapping elsewhere on the page
 document.addEventListener('pointerdown', e=>{
-  // If the tap is on a habit action button (Delete/Reset), let it through.
+  // If the tap is on a habit action button (Delete/Reset/Edit), let it through.
   if(e.target.closest('.habit-swipe-bg')) return;
   document.querySelectorAll('.habit.held-open, .habit.held-open-right').forEach(h=>{
     h.classList.remove('held-open','held-open-right');
     h.style.transform='';
     const wrap = h.closest('.habit-wrap');
-    if(wrap) wrap.classList.remove('show-reset');
+    if(wrap) wrap.classList.remove('show-reset','show-edit');
   });
 }, true);
 
