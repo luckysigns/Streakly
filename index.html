@@ -1222,7 +1222,7 @@ async function deleteHabitNow(id){
     actionLabel:'Undo',
     duration:6000,
     onAction: async ()=>{
-      // Re-insert at original position locally
+      // Re-insert at original position locally — show instantly
       state.habits.push(deletedHabit);
       if(state.order){
         if(deletedOrderIdx>=0 && deletedOrderIdx<=state.order.length) state.order.splice(deletedOrderIdx,0,id);
@@ -1233,27 +1233,31 @@ async function deleteHabitNow(id){
         state.completions[d].push(deletedCompletions[d]);
       });
       saveState();
-      // Re-create in cloud (gets a new UUID — update local id to match cloud)
-      const newId = await cloudAddHabit({name:deletedHabit.name, pts:deletedHabit.pts, cat:deletedHabit.cat});
-      if(newId){
-        // Replace the id everywhere
-        const idx = state.habits.findIndex(h=>h.id===id);
-        if(idx>=0) state.habits[idx].id = newId;
-        if(state.order){
-          const oi = state.order.indexOf(id);
-          if(oi>=0) state.order[oi] = newId;
+      render();              // <-- update UI immediately
+      showToast('Restored'); // <-- give feedback now, not after cloud
+
+      // Then re-create in cloud in the background and reconcile IDs
+      try{
+        const newId = await cloudAddHabit({name:deletedHabit.name, pts:deletedHabit.pts, cat:deletedHabit.cat});
+        if(newId){
+          // Replace the old id with the new cloud id everywhere
+          const idx = state.habits.findIndex(h=>h.id===id);
+          if(idx>=0) state.habits[idx].id = newId;
+          if(state.order){
+            const oi = state.order.indexOf(id);
+            if(oi>=0) state.order[oi] = newId;
+          }
+          Object.keys(state.completions).forEach(d=>{
+            state.completions[d] = state.completions[d].map(c=> c.id===id ? {...c,id:newId} : c);
+          });
+          for(const day of Object.keys(deletedCompletions)){
+            cloudSetCompletion(newId, day, deletedCompletions[day].mult);
+          }
+          saveState();
+          // Re-render so click handlers use the new id (otherwise next tap would fail)
+          render();
         }
-        Object.keys(state.completions).forEach(d=>{
-          state.completions[d] = state.completions[d].map(c=> c.id===id ? {...c,id:newId} : c);
-        });
-        // Restore completions in cloud too
-        for(const day of Object.keys(deletedCompletions)){
-          cloudSetCompletion(newId, day, deletedCompletions[day].mult);
-        }
-        saveState();
-      }
-      render();
-      showToast('Restored');
+      }catch(err){ console.error('Cloud restore failed', err); }
     }
   });
 }
