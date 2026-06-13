@@ -778,11 +778,14 @@ async function loadFromCloud(){
 
 // Cloud write helpers (called alongside local saves)
 async function cloudAddHabit(h){
-  if(!cloudReady) return;
-  const { data } = await sb.from('habits').insert({
-    user_id: currentUser.id, name:h.name, points:h.pts, category:h.cat, sort_order: state.habits.length
-  }).select().single();
-  return data ? data.id : null;
+  if(!cloudReady) return null;
+  try{
+    const { data, error } = await sb.from('habits').insert({
+      user_id: currentUser.id, name:h.name, points:h.pts, category:h.cat, sort_order: state.habits.length
+    }).select().single();
+    if(error){ console.error('cloudAddHabit error', error); return null; }
+    return data ? data.id : null;
+  }catch(err){ console.error('cloudAddHabit threw', err); return null; }
 }
 async function cloudDeleteHabit(id){
   if(!cloudReady) return;
@@ -1099,20 +1102,35 @@ async function addHabit(){
   const name = document.getElementById('in-name').value.trim();
   const pts = parseInt(document.getElementById('in-pts').value)||50;
   const cat = document.getElementById('in-cat').value;
-  if(!name) return;
-  const newHabit = {name, pts, cat};
-  // Get a cloud id if connected, otherwise temp local id
-  let id = await cloudAddHabit(newHabit);
-  if(!id) id = 'local_'+Date.now();
-  newHabit.id = id;
+  if(!name){ alert('Enter a name for the habit'); return; }
+  // Show in the list IMMEDIATELY with a temp id; sync to cloud in background
+  const tempId = 'local_'+Date.now();
+  const newHabit = {id: tempId, name, pts, cat};
   state.habits.push(newHabit);
-  if(state.order) state.order.push(id);
+  if(state.order) state.order.push(tempId);
   saveState();
   document.getElementById('in-name').value='';
   document.getElementById('in-pts').value='50';
   toggleForm();
   render();
   showToast('Habit added!');
+
+  // Background cloud sync — replace temp id with cloud UUID once it comes back
+  try{
+    const newId = await cloudAddHabit(newHabit);
+    if(newId && newId !== tempId){
+      const idx = state.habits.findIndex(h=>h.id===tempId);
+      if(idx>=0) state.habits[idx].id = newId;
+      if(state.order){
+        const oi = state.order.indexOf(tempId);
+        if(oi>=0) state.order[oi] = newId;
+      }
+      saveState();
+      render();
+    }
+  }catch(err){
+    console.error('Cloud add failed (kept locally)', err);
+  }
 }
 
 // ====== EDIT HABIT ======
