@@ -298,9 +298,10 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 .member-remove:hover{background:#FBE6E6}
 
 /* TOAST */
-.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--text);color:#fff;font-size:13px;font-weight:500;padding:10px 16px;border-radius:99px;z-index:999;transition:transform .3s cubic-bezier(.4,0,.2,1);font-family:'DM Sans',sans-serif;max-width:90vw;display:flex;align-items:center;gap:12px}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--text);color:#fff;font-size:13px;font-weight:500;padding:10px 16px;border-radius:99px;z-index:999;transition:transform .3s cubic-bezier(.4,0,.2,1);font-family:'DM Sans',sans-serif;max-width:90vw;display:flex;align-items:center;gap:12px;cursor:pointer}
 .toast.show{transform:translateX(-50%) translateY(0)}
-.toast .toast-action{background:rgba(255,255,255,.18);color:#fff;border:none;font-family:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;cursor:pointer;letter-spacing:.3px}
+.toast span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55vw}
+.toast .toast-action{background:rgba(255,255,255,.18);color:#fff;border:none;font-family:inherit;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;cursor:pointer;letter-spacing:.3px;flex-shrink:0}
 .toast .toast-action:active{background:rgba(255,255,255,.32)}
 
 /* EMPTY */
@@ -1236,7 +1237,7 @@ async function deleteHabitNow(id){
   // Remove from cloud
   cloudDeleteHabit(id);
 
-  showToast(`Deleted "${deletedHabit.name}"`, {
+  showToast(`Deleted`, {
     actionLabel:'Undo',
     duration:6000,
     onAction: async ()=>{
@@ -2223,14 +2224,14 @@ function showToast(msg, opts){
   const t = document.getElementById('toast');
   let html = `<span>${msg}</span>`;
   if(opts && opts.actionLabel && typeof opts.onAction === 'function'){
-    // Stash handler on window; toast inner HTML calls it by name
     window._toastAction = opts.onAction;
-    html += `<button class="toast-action" onclick="(window._toastAction&&window._toastAction());document.getElementById('toast').classList.remove('show')">${opts.actionLabel}</button>`;
+    html += `<button class="toast-action" onclick="event.stopPropagation();(window._toastAction&&window._toastAction());document.getElementById('toast').classList.remove('show')">${opts.actionLabel}</button>`;
   } else {
     window._toastAction = null;
   }
   t.innerHTML = html;
   t.classList.add('show');
+  t.onclick = ()=>{ t.classList.remove('show'); };
   clearTimeout(window._toastT);
   const dur = opts && opts.duration ? opts.duration : 2600;
   window._toastT = setTimeout(()=>t.classList.remove('show'), dur);
