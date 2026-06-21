@@ -52,6 +52,20 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 .pts-streak{font-size:13px;color:var(--green-mid);font-weight:500}
 .pts-ring{width:52px;height:52px;flex-shrink:0;margin-left:auto}
 
+/* Category breakdown row inside the points banner */
+.cat-stats{display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.1)}
+.cat-stat{flex:1;text-align:center;padding:6px 4px;border-radius:10px;background:rgba(255,255,255,.06);transition:background .2s}
+.cat-stat[data-cat=mind]{box-shadow:inset 0 2px 0 var(--cat-mind)}
+.cat-stat[data-cat=body]{box-shadow:inset 0 2px 0 var(--cat-body)}
+.cat-stat[data-cat=health]{box-shadow:inset 0 2px 0 var(--cat-health)}
+.cat-stat[data-cat=other]{box-shadow:inset 0 2px 0 var(--cat-other)}
+.cat-stat-emoji{font-size:14px;line-height:1;margin-bottom:3px}
+.cat-stat-num{font-size:15px;font-weight:600;color:#fff;line-height:1.1}
+.cat-stat-label{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:rgba(255,255,255,.55);margin-top:2px;font-weight:500}
+
+/* Feedback line below banner */
+.feedback-line{margin-top:10px;padding:0 4px;font-size:13px;color:var(--text);font-weight:500;text-align:center;font-style:italic;opacity:.85}
+
 .swipe-hint{position:absolute;top:50%;transform:translateY(-50%);color:rgba(255,255,255,.35);font-size:20px;pointer-events:none;animation:fade 2.5s ease-in-out infinite;z-index:2}
 .swipe-hint.left{left:6px}.swipe-hint.right{right:6px}
 @keyframes fade{0%,100%{opacity:.35}50%{opacity:.75}}
@@ -370,22 +384,33 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
       <span class="swipe-hint left">‹</span>
       <span class="swipe-hint right">›</span>
       <div class="pts-banner">
-        <div>
-          <div class="pts-label">
-            <span>Points</span>
-            <span class="day-label" id="day-label">Today</span>
+        <div style="width:100%">
+          <div style="display:flex;align-items:center">
+            <div style="flex:1">
+              <div class="pts-label">
+                <span>Points</span>
+                <span class="day-label" id="day-label">Today</span>
+              </div>
+              <div class="pts-big" id="pts-big">0</div>
+              <div class="pts-streak" id="pts-sub">Keep going!</div>
+            </div>
+            <svg class="pts-ring" viewBox="0 0 52 52">
+              <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="4"/>
+              <circle id="ring-fill" cx="26" cy="26" r="22" fill="none" stroke="#5DCAA5" stroke-width="4"
+                stroke-dasharray="138.2" stroke-dashoffset="138.2" stroke-linecap="round"
+                transform="rotate(-90 26 26)" style="transition:stroke-dashoffset .4s ease"/>
+            </svg>
           </div>
-          <div class="pts-big" id="pts-big">0</div>
-          <div class="pts-streak" id="pts-sub">Keep going!</div>
+          <div class="cat-stats" id="cat-stats">
+            <div class="cat-stat" data-cat="mind"><div class="cat-stat-emoji">🧠</div><div class="cat-stat-num" id="cat-mind-pts">0</div><div class="cat-stat-label">Mind</div></div>
+            <div class="cat-stat" data-cat="body"><div class="cat-stat-emoji">💪</div><div class="cat-stat-num" id="cat-body-pts">0</div><div class="cat-stat-label">Body</div></div>
+            <div class="cat-stat" data-cat="health"><div class="cat-stat-emoji">💧</div><div class="cat-stat-num" id="cat-health-pts">0</div><div class="cat-stat-label">Health</div></div>
+            <div class="cat-stat" data-cat="other"><div class="cat-stat-emoji">✨</div><div class="cat-stat-num" id="cat-other-pts">0</div><div class="cat-stat-label">Other</div></div>
+          </div>
         </div>
-        <svg class="pts-ring" viewBox="0 0 52 52">
-          <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="4"/>
-          <circle id="ring-fill" cx="26" cy="26" r="22" fill="none" stroke="#5DCAA5" stroke-width="4"
-            stroke-dasharray="138.2" stroke-dashoffset="138.2" stroke-linecap="round"
-            transform="rotate(-90 26 26)" style="transition:stroke-dashoffset .4s ease"/>
-        </svg>
       </div>
     </div>
+    <div class="feedback-line" id="feedback-line"></div>
 
     <div class="prog-wrap">
       <div class="prog-label"><span id="prog-text">0 of 0 done</span><span id="prog-pct">0%</span></div>
@@ -911,15 +936,15 @@ async function onLoggedIn(){
 // If the user has no cloud habits yet (first login), seeds with defaults.
 async function loadFromCloud(){
   try{
-    let { data: habits } = await sb.from('habits').select('*').eq('user_id', currentUser.id).order('sort_order').order('created_at');
-    const { data: comps } = await sb.from('completions').select('*').eq('user_id', currentUser.id);
+    let { data: habits } = await sb.from('streakly_habits').select('*').eq('user_id', currentUser.id).order('sort_order').order('created_at');
+    const { data: comps } = await sb.from('streakly_completions').select('*').eq('user_id', currentUser.id);
 
     if(!habits || habits.length === 0){
       // First time — seed defaults into the cloud
       const seed = defaultHabits.map((h,i)=>({
         user_id: currentUser.id, name: h.name, points: h.pts, category: h.cat, sort_order: i
       }));
-      const { data: inserted } = await sb.from('habits').insert(seed).select();
+      const { data: inserted } = await sb.from('streakly_habits').insert(seed).select();
       habits = inserted || [];
     } else {
       // Deduplicate: if there are multiple habits with the same name (normalized),
@@ -943,10 +968,10 @@ async function loadFromCloud(){
           if(!duplicates.includes(h.id)) continue;
           const keeper = seenByName.get(normalizeName(h.name));
           if(keeper){
-            try{ await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
+            try{ await sb.from('streakly_completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
           }
         }
-        await sb.from('habits').delete().in('id', duplicates);
+        await sb.from('streakly_habits').delete().in('id', duplicates);
         habits = habits.filter(h=>!duplicates.includes(h.id));
       }
     }
@@ -955,7 +980,7 @@ async function loadFromCloud(){
     // Rebuild completions object {date:[{id,mult,completedAt}]} — and dedupe per-day
     state.completions = {};
     // Refetch completions in case we moved any onto the keeper
-    const { data: comps2 } = await sb.from('completions').select('*').eq('user_id', currentUser.id);
+    const { data: comps2 } = await sb.from('streakly_completions').select('*').eq('user_id', currentUser.id);
     const seenComp = new Set(); // habit_id+day
     (comps2||comps||[]).forEach(c=>{
       const k = c.habit_id+'|'+c.day;
@@ -972,7 +997,7 @@ async function loadFromCloud(){
 async function cloudAddHabit(h){
   if(!cloudReady) return null;
   try{
-    const { data, error } = await sb.from('habits').insert({
+    const { data, error } = await sb.from('streakly_habits').insert({
       user_id: currentUser.id, name:h.name, points:h.pts, category:h.cat, sort_order: state.habits.length
     }).select().single();
     if(error){ console.error('cloudAddHabit error', error); return null; }
@@ -981,7 +1006,7 @@ async function cloudAddHabit(h){
 }
 async function cloudDeleteHabit(id){
   if(!cloudReady) return;
-  await sb.from('habits').delete().eq('id', id);
+  await sb.from('streakly_habits').delete().eq('id', id);
 }
 async function cloudUpdateHabit(id, fields){
   if(!cloudReady) return;
@@ -989,24 +1014,24 @@ async function cloudUpdateHabit(id, fields){
   if(fields.name!==undefined) payload.name = fields.name;
   if(fields.pts!==undefined) payload.points = fields.pts;
   if(fields.cat!==undefined) payload.category = fields.cat;
-  await sb.from('habits').update(payload).eq('id', id);
+  await sb.from('streakly_habits').update(payload).eq('id', id);
 }
 async function cloudSaveOrder(){
   if(!cloudReady) return;
   // Update sort_order for each habit
   for(let i=0;i<state.order.length;i++){
-    await sb.from('habits').update({ sort_order:i }).eq('id', state.order[i]);
+    await sb.from('streakly_habits').update({ sort_order:i }).eq('id', state.order[i]);
   }
 }
 async function cloudSetCompletion(habitId, day, mult){
   if(!cloudReady) return;
-  await sb.from('completions').upsert({
+  await sb.from('streakly_completions').upsert({
     user_id: currentUser.id, habit_id: habitId, day, multiplier: mult
   }, { onConflict: 'user_id,habit_id,day' });
 }
 async function cloudRemoveCompletion(habitId, day){
   if(!cloudReady) return;
-  await sb.from('completions').delete().eq('user_id', currentUser.id).eq('habit_id', habitId).eq('day', day);
+  await sb.from('streakly_completions').delete().eq('user_id', currentUser.id).eq('habit_id', habitId).eq('day', day);
 }
 
 // ====== CLOUD SOCIAL (friends, leaderboard, profiles) ======
@@ -1031,7 +1056,7 @@ let allProfiles = {};    // id -> {display_name}
 async function loadFriends(){
   if(!cloudReady) return;
   // Get friend links where I'm the owner
-  const { data: links } = await sb.from('friends').select('friend_id').eq('user_id', currentUser.id);
+  const { data: links } = await sb.from('streakly_friends').select('friend_id').eq('user_id', currentUser.id);
   const friendIds = (links||[]).map(l=>l.friend_id);
   if(friendIds.length===0){ cloudFriends=[]; return; }
   // Get their profiles
@@ -1048,10 +1073,10 @@ async function loadFriends(){
 
 // Sum points for a user between two dates (inclusive)
 async function userPointsBetween(userId, fromDay, toDay){
-  const { data: comps } = await sb.from('completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', fromDay).lte('day', toDay);
+  const { data: comps } = await sb.from('streakly_completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', fromDay).lte('day', toDay);
   if(!comps || comps.length===0) return 0;
   const habitIds = [...new Set(comps.map(c=>c.habit_id))];
-  const { data: habits } = await sb.from('habits').select('id, points').in('id', habitIds);
+  const { data: habits } = await sb.from('streakly_habits').select('id, points').in('id', habitIds);
   const ptsMap = {}; (habits||[]).forEach(h=>ptsMap[h.id]=h.points);
   return comps.reduce((s,c)=>s+(ptsMap[c.habit_id]||0)*c.multiplier, 0);
 }
@@ -1065,17 +1090,17 @@ async function searchUsers(query){
 
 async function addFriendCloud(friendId){
   if(!cloudReady) return;
-  await sb.from('friends').upsert({ user_id: currentUser.id, friend_id: friendId }, { onConflict:'user_id,friend_id' });
+  await sb.from('streakly_friends').upsert({ user_id: currentUser.id, friend_id: friendId }, { onConflict:'user_id,friend_id' });
 }
 async function removeFriendCloud(friendId){
   if(!cloudReady) return;
-  await sb.from('friends').delete().eq('user_id', currentUser.id).eq('friend_id', friendId);
+  await sb.from('streakly_friends').delete().eq('user_id', currentUser.id).eq('friend_id', friendId);
 }
 
 // Fetch a user's habits + their completions for a given day (for profile view)
 async function fetchUserDay(userId, day){
-  const { data: habits } = await sb.from('habits').select('*').eq('user_id', userId).order('sort_order');
-  const { data: comps } = await sb.from('completions').select('*').eq('user_id', userId).eq('day', day);
+  const { data: habits } = await sb.from('streakly_habits').select('*').eq('user_id', userId).order('sort_order');
+  const { data: comps } = await sb.from('streakly_completions').select('*').eq('user_id', userId).eq('day', day);
   const compMap = {}; (comps||[]).forEach(c=>compMap[c.habit_id]={mult:c.multiplier});
   return { habits:(habits||[]).map(h=>({id:h.id,name:h.name,pts:h.points,cat:h.category})), compMap };
 }
@@ -1084,8 +1109,8 @@ async function fetchUserDay(userId, day){
 async function fetchUserMonth(userId, year, month){
   const first = new Date(year, month, 1).toISOString().slice(0,10);
   const last = new Date(year, month+1, 0).toISOString().slice(0,10);
-  const { data: comps } = await sb.from('completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', first).lte('day', last);
-  const { data: habits } = await sb.from('habits').select('id, points').eq('user_id', userId);
+  const { data: comps } = await sb.from('streakly_completions').select('habit_id, multiplier, day').eq('user_id', userId).gte('day', first).lte('day', last);
+  const { data: habits } = await sb.from('streakly_habits').select('id, points').eq('user_id', userId);
   const ptsMap = {}; (habits||[]).forEach(h=>ptsMap[h.id]=h.points);
   const byDay = {};
   (comps||[]).forEach(c=>{ byDay[c.day]=(byDay[c.day]||0)+(ptsMap[c.habit_id]||0)*c.multiplier; });
@@ -1335,7 +1360,7 @@ async function cleanupDuplicates(){
   if(!confirm('This will remove duplicate habits with the same name, keeping the oldest copy and preserving its check history. Proceed?')) return;
   showToast('Cleaning up…');
   try{
-    let { data: habits } = await sb.from('habits').select('*').eq('user_id', currentUser.id).order('created_at');
+    let { data: habits } = await sb.from('streakly_habits').select('*').eq('user_id', currentUser.id).order('created_at');
     const normalizeName = s => (s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
     const seenByName = new Map();
     const duplicates = [];
@@ -1356,10 +1381,10 @@ async function cleanupDuplicates(){
     for(const h of duplicates){
       const keeper = seenByName.get(normalizeName(h.name));
       if(keeper){
-        try{ await sb.from('completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
+        try{ await sb.from('streakly_completions').update({ habit_id: keeper.id }).eq('user_id', currentUser.id).eq('habit_id', h.id); }catch(err){console.warn(err)}
       }
     }
-    await sb.from('habits').delete().in('id', duplicates.map(h=>h.id));
+    await sb.from('streakly_habits').delete().in('id', duplicates.map(h=>h.id));
     await loadFromCloud();
     render();
     showToast(`Removed ${duplicates.length} duplicate${duplicates.length!==1?'s':''}`);
@@ -1520,6 +1545,50 @@ function mockSharedTag(habitId){
   return null; // Disabled — real shared-habit indicators come in a later update
 }
 
+// Friendly feedback based on which categories the user is hitting.
+// Cached per (date + completion fingerprint) so it doesn't reroll on every render.
+let _feedbackCache = {key:null, msg:''};
+function pickFeedback(catPts, catCounts, totalPts, doneCount, total){
+  const cacheKey = viewDate+'|'+JSON.stringify(catCounts)+'|'+doneCount+'/'+total;
+  if(_feedbackCache.key === cacheKey) return _feedbackCache.msg;
+  const msg = _computeFeedback(catPts, catCounts, totalPts, doneCount, total);
+  _feedbackCache = {key:cacheKey, msg};
+  return msg;
+}
+function _computeFeedback(catPts, catCounts, totalPts, doneCount, total){
+  if(viewDate !== TODAY){
+    if(totalPts === 0) return viewDate < TODAY ? "Nothing logged that day." : "Day's ahead — plan something good.";
+    return `${totalPts} points on this day.`;
+  }
+  if(total > 0 && doneCount === total) return "Perfect day. You showed up for everything. 🏆";
+  if(totalPts === 0) return "A fresh slate. Pick one and start. ✨";
+
+  const cats = [
+    {key:'mind',   strong:["Awesome work on your mind today 🧠","Your headspace is winning today.","Mind sharpened. Keep that focus."]},
+    {key:'body',   strong:["Body in motion — feels good. 💪","Strong work moving your body today.","Your body's getting the love it deserves."]},
+    {key:'health', strong:["Treating your health well today. 💧","Solid health choices — future you thanks you.","Daily health basics ✓ — they add up."]},
+    {key:'other',  strong:["Loving the extras today. ✨","Those little wins matter.","Bonus points well earned."]}
+  ];
+
+  const entries = Object.entries(catPts).sort((a,b)=>b[1]-a[1]);
+  const top = entries[0];
+  const nonzero = entries.filter(([k,v])=>v>0);
+
+  if(nonzero.length >= 3) return "Beautifully balanced day — touching every area. 🌿";
+  if(nonzero.length === 2){
+    const [a,b] = nonzero;
+    if(Math.abs(a[1]-b[1]) < Math.max(20, a[1]*0.25)){
+      return `Nice balance of ${a[0]} and ${b[0]} today.`;
+    }
+  }
+
+  const found = cats.find(c=>c.key===top[0]);
+  if(found){
+    return found.strong[Math.floor(Math.random()*found.strong.length)];
+  }
+  return "Keep going — every check counts.";
+}
+
 function render(){
   const done = dayCompletions(viewDate);
   const pts = dayPts(viewDate);
@@ -1540,6 +1609,24 @@ function render(){
   document.getElementById('pts-sub').textContent = doneCount===total && total>0 ? 'All done! 🎉' : viewDate===TODAY?`${total-doneCount} habit${total-doneCount!==1?'s':''} left`:`Viewing ${formatViewDate().toLowerCase()}`;
   const dashLen = 138.2;
   document.getElementById('ring-fill').style.strokeDashoffset = dashLen - (dashLen * ringPct);
+
+  // Per-category points + counts for today (or the day being viewed)
+  const catPts = {mind:0, body:0, health:0, other:0};
+  const catCounts = {mind:0, body:0, health:0, other:0};
+  dayCompletions(viewDate).forEach(c=>{
+    const h = state.habits.find(x=>x.id===c.id);
+    if(!h) return;
+    const cat = catPts[h.cat]!==undefined ? h.cat : 'other';
+    catPts[cat] += h.pts * c.mult;
+    catCounts[cat] += 1;
+  });
+  document.getElementById('cat-mind-pts').textContent = catPts.mind;
+  document.getElementById('cat-body-pts').textContent = catPts.body;
+  document.getElementById('cat-health-pts').textContent = catPts.health;
+  document.getElementById('cat-other-pts').textContent = catPts.other;
+
+  // Friendly feedback line — picks based on what categories you've worked on
+  document.getElementById('feedback-line').textContent = pickFeedback(catPts, catCounts, pts, doneCount, total);
 
   const ordered = getOrderedHabits(viewDate);
   const filtered = activeFilter==='all' ? ordered : ordered.filter(h=>h.cat===activeFilter);
