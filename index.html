@@ -631,10 +631,10 @@ h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
 <div class="modal-bg" id="add-friend-modal">
   <div class="modal">
     <h2>Add friends</h2>
-    <p>Search for friends by the name they signed up with. They need a Streakly account first — share the app link below to invite them.</p>
-    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Search by name</p>
-    <input type="text" id="friend-search-in" placeholder="Type a friend's name…" oninput="onFriendSearch()" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:12px"/>
-    <div id="friend-search-results" style="margin-bottom:18px"></div>
+    <p>Everyone on Streakly is listed below — tap Add. Or search by name. Not here yet? Send them the app link to invite them.</p>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Find people</p>
+    <input type="text" id="friend-search-in" placeholder="Search by name…" oninput="onFriendSearch()" style="width:100%;font-family:'DM Sans',sans-serif;font-size:15px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);margin-bottom:12px"/>
+    <div id="friend-search-results" style="margin-bottom:18px;max-height:280px;overflow-y:auto"></div>
     <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Or invite them to Streakly</p>
     <div class="share-url" id="friend-invite-url" style="margin-bottom:10px">Generating…</div>
     <button class="btn-primary btn-copy" style="margin-bottom:20px" onclick="copyFriendInvite()">Copy app link</button>
@@ -929,6 +929,8 @@ async function onLoggedIn(){
       render();
     }
   }catch(err){ console.error('Initial render failed', err); }
+  // Check for "someone added you" notifications shortly after load
+  setTimeout(()=>{ checkNotifications(); }, 1500);
 }
 
 // ====== CLOUD SYNC ======
@@ -1088,13 +1090,47 @@ async function searchUsers(query){
   return (data||[]).map(p=>({ id:p.id, name:p.display_name||'User' }));
 }
 
+// List everyone on Streakly (for "who's on Streakly" discovery)
+async function listAllUsers(){
+  if(!cloudReady) return [];
+  const { data } = await sb.from('profiles').select('id, display_name').neq('id', currentUser.id).order('display_name').limit(100);
+  return (data||[]).filter(p=>p.display_name).map(p=>({ id:p.id, name:p.display_name }));
+}
+
 async function addFriendCloud(friendId){
   if(!cloudReady) return;
   await sb.from('streakly_friends').upsert({ user_id: currentUser.id, friend_id: friendId }, { onConflict:'user_id,friend_id' });
+  // Drop a notification into the new friend's inbox
+  try{
+    await sb.from('streakly_notifications').insert({
+      user_id: friendId,
+      actor_id: currentUser.id,
+      actor_name: state.name || 'Someone',
+      type: 'friend_add',
+      message: `${state.name||'Someone'} added you as a friend`
+    });
+  }catch(err){ console.warn('notify failed', err); }
 }
 async function removeFriendCloud(friendId){
   if(!cloudReady) return;
   await sb.from('streakly_friends').delete().eq('user_id', currentUser.id).eq('friend_id', friendId);
+}
+
+// ====== NOTIFICATIONS ======
+async function checkNotifications(){
+  if(!cloudReady) return;
+  try{
+    const { data } = await sb.from('streakly_notifications')
+      .select('*').eq('user_id', currentUser.id).eq('read', false)
+      .order('created_at', {ascending:false}).limit(20);
+    if(data && data.length){
+      // Show the most recent unread as a toast, mark all shown as read
+      const latest = data[0];
+      showToast(`🎉 ${latest.message}`, {duration:5000});
+      const ids = data.map(n=>n.id);
+      await sb.from('streakly_notifications').update({read:true}).in('id', ids);
+    }
+  }catch(err){ console.warn('notif check failed', err); }
 }
 
 // Fetch a user's habits + their completions for a given day (for profile view)
@@ -2024,13 +2060,19 @@ async function viewFriendList(friendId){
 }
 
 // ====== ADD FRIENDS ======
-function openAddFriend(){
+let _allUsersCache = null;
+async function openAddFriend(){
   const link = `${window.location.origin}${window.location.pathname}`;
   document.getElementById('friend-invite-url').textContent = link;
   window._friendInviteLink = link;
   document.getElementById('friend-search-in').value = '';
-  document.getElementById('friend-search-results').innerHTML = '';
   document.getElementById('add-friend-modal').classList.add('open');
+  // Load friends + everyone on Streakly
+  const el = document.getElementById('friend-search-results');
+  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">Loading people on Streakly…</div>';
+  await loadFriends();
+  _allUsersCache = await listAllUsers();
+  renderUserList(_allUsersCache, 'Everyone on Streakly');
 }
 function closeAddFriend(){
   document.getElementById('add-friend-modal').classList.remove('open');
@@ -2042,30 +2084,39 @@ function copyFriendInvite(){
   }
 }
 
+function renderUserList(users, heading){
+  const el = document.getElementById('friend-search-results');
+  const myFriendIds = cloudFriends.map(f=>f.id);
+  if(!users || users.length===0){
+    el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">No one found. Invite friends with the link below.</div>';
+    return;
+  }
+  const head = heading ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:4px 0 8px">${heading}</div>` : '';
+  el.innerHTML = head + users.map(u=>{
+    const c = colorFor(u.name);
+    const already = myFriendIds.includes(u.id);
+    return `<div class="suggested-friend">
+      <div class="avatar" style="background:${c.bg};color:${c.fg};width:34px;height:34px;font-size:12px">${initialsOf(u.name)}</div>
+      <span class="member-name" style="flex:1">${u.name}</span>
+      <button class="add-friend-btn${already?' added':''}" ${already?'disabled':''} onclick="addFriend('${u.id}','${u.name.replace(/'/g,"\\'")}',this)">${already?'✓ Added':'Add'}</button>
+    </div>`;
+  }).join('');
+}
+
 let _searchTimer = null;
 function onFriendSearch(){
   clearTimeout(_searchTimer);
-  const q = document.getElementById('friend-search-in').value.trim();
-  const el = document.getElementById('friend-search-results');
-  if(!q){ el.innerHTML=''; return; }
-  el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">Searching…</div>';
-  _searchTimer = setTimeout(async ()=>{
-    const results = await searchUsers(q);
-    const myFriendIds = cloudFriends.map(f=>f.id);
-    if(results.length===0){
-      el.innerHTML = '<div style="font-size:13px;color:var(--muted);padding:8px 0">No one found with that name. They may need to sign up first.</div>';
-      return;
-    }
-    el.innerHTML = results.map(u=>{
-      const c = colorFor(u.name);
-      const already = myFriendIds.includes(u.id);
-      return `<div class="suggested-friend">
-        <div class="avatar" style="background:${c.bg};color:${c.fg};width:34px;height:34px;font-size:12px">${initialsOf(u.name)}</div>
-        <span class="member-name" style="flex:1">${u.name}</span>
-        <button class="add-friend-btn${already?' added':''}" ${already?'disabled':''} onclick="addFriend('${u.id}','${u.name.replace(/'/g,"\\'")}',this)">${already?'✓ Added':'Add'}</button>
-      </div>`;
-    }).join('');
-  }, 350);
+  const q = document.getElementById('friend-search-in').value.trim().toLowerCase();
+  if(!q){
+    // Empty search — show everyone again
+    renderUserList(_allUsersCache || [], 'Everyone on Streakly');
+    return;
+  }
+  // Filter the already-loaded list instantly
+  if(_allUsersCache){
+    const filtered = _allUsersCache.filter(u=>u.name.toLowerCase().includes(q));
+    renderUserList(filtered, filtered.length?'Matches':null);
+  }
 }
 
 async function addFriend(friendId, name, btn){
