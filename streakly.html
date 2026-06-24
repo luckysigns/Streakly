@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>Streakly</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --green:#1a9e6e;--green-light:#e6f7f1;--green-mid:#5DCAA5;
+  --bg:#f7f6f2;--card:#ffffff;--text:#1a1a18;--muted:#888880;
+  --border:#e5e3dc;--danger:#e24b4a;
+  --cat-mind:#7B5EA7;--cat-mind-light:#EFE9F7;
+  --cat-body:#D97447;--cat-body-light:#FBEDE3;
+  --cat-health:#3B8BBF;--cat-health-light:#E4F0F8;
+  --cat-other:#BA7517;--cat-other-light:#FAEEDA;
+  --radius:14px;--radius-sm:9px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{font-size:16px}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;max-width:480px;margin:0 auto;padding-bottom:90px;overflow-x:hidden}
+h1,h2{font-family:'DM Serif Display',serif;font-weight:400}
+
+/* NAV */
+.nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:var(--card);border-top:1px solid var(--border);display:flex;z-index:100;padding:0 0 env(safe-area-inset-bottom)}
+.nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:12px 0;font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;letter-spacing:0.02em;transition:color 0.15s}
+.nav-btn.active{color:var(--green)}
+.nav-btn svg{width:22px;height:22px;stroke-width:1.8}
+
+/* HEADER */
+.header{padding:52px 20px 16px;display:flex;align-items:flex-end;justify-content:space-between}
+.header h1{font-size:30px;line-height:1}
+.header-sub{font-size:13px;color:var(--muted);margin-top:4px}
+.date-chip{font-size:12px;background:var(--card);border:1px solid var(--border);padding:6px 12px;border-radius:99px;color:var(--muted);font-weight:500}
+
+/* POINTS BANNER + DAY SWIPE */
+.banner-wrap{margin:0 16px 16px;position:relative;overflow:hidden;border-radius:var(--radius)}
+.pts-banner{background:var(--text);color:#fff;padding:18px 20px;display:flex;align-items:center;gap:0;touch-action:pan-y;cursor:grab;user-select:none;transition:transform .25s cubic-bezier(.4,0,.2,1)}
+.pts-banner.dragging{transition:none;cursor:grabbing}
+.pts-big{font-family:'DM Serif Display',serif;font-size:48px;line-height:1;color:#fff}
+.pts-info{margin-left:14px;flex:1}
+.pts-label{font-size:12px;opacity:.6;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px;display:flex;align-items:center;gap:8px}
+.day-label{font-size:11px;background:rgba(255,255,255,.12);padding:2px 8px;border-radius:99px;font-weight:500}
+.pts-streak{font-size:13px;color:var(--green-mid);font-weight:500}
+.pts-ring{width:52px;height:52px;flex-shrink:0;margin-left:auto}
+.swipe-hint{position:absolute;top:50%;transform:translateY(-50%);color:rgba(255,255,255,.3);font-size:18px;pointer-events:none;animation:fade 2.5s ease-in-out infinite}
+.swipe-hint.left{left:8px}.swipe-hint.right{right:8px}
+@keyframes fade{0%,100%{opacity:.3}50%{opacity:.7}}
+
+/* PROGRESS */
+.prog-wrap{margin:0 16px 20px}
+.prog-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:7px;font-weight:500}
+.prog-track{background:var(--border);border-radius:99px;height:7px;overflow:hidden}
+.prog-fill{height:7px;border-radius:99px;background:var(--green);transition:width .4s cubic-bezier(.4,0,.2,1)}
+
+/* SECTION LABEL */
+.section-label{padding:0 20px 10px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between}
+.section-label .link{font-size:12px;color:var(--green);text-transform:none;letter-spacing:0;font-weight:500;cursor:pointer;background:none;border:none;padding:0}
+
+/* HABITS */
+.habits{display:flex;flex-direction:column;gap:8px;padding:0 16px}
+.habit{background:var(--card);border:1.5px solid var(--border);border-left-width:4px;border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;gap:12px;transition:background .2s,border-color .2s;cursor:pointer;-webkit-user-select:none;user-select:none;position:relative}
+.habit[data-cat=mind]{border-left-color:var(--cat-mind)}
+.habit[data-cat=body]{border-left-color:var(--cat-body)}
+.habit[data-cat=health]{border-left-color:var(--cat-health)}
+.habit[data-cat=other]{border-left-color:var(--cat-other)}
+.habit.done{background:var(--green-light);border-color:var(--green-mid)}
+.habit.done[data-cat=mind]{border-left-color:var(--cat-mind)}
+.habit.done[data-cat=body]{border-left-color:var(--cat-body)}
+.habit.done[data-cat=health]{border-left-color:var(--cat-health)}
+.habit.done[data-cat=other]{border-left-color:var(--cat-other)}
+.habit-check{width:28px;height:28px;border-radius:50%;border:1.5px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s;background:var(--bg);position:relative}
+.habit.done .habit-check{background:var(--green);border-color:var(--green)}
+.habit-check svg{width:14px;height:14px;stroke:#fff;stroke-width:2.5;opacity:0;transition:opacity .15s}
+.habit.done .habit-check svg{opacity:1}
+.mult-badge{position:absolute;top:-6px;right:-8px;background:var(--text);color:#fff;font-size:10px;font-weight:600;border-radius:99px;padding:1px 6px;line-height:1.3;border:1.5px solid var(--bg)}
+.habit-body{flex:1;min-width:0}
+.habit-name{font-size:15px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .2s}
+.habit.done .habit-name{color:var(--muted);text-decoration:line-through}
+.habit-cat{font-size:11px;margin-top:2px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+.habit[data-cat=mind] .habit-cat{color:var(--cat-mind)}
+.habit[data-cat=body] .habit-cat{color:var(--cat-body)}
+.habit[data-cat=health] .habit-cat{color:var(--cat-health)}
+.habit[data-cat=other] .habit-cat{color:var(--cat-other)}
+.habit-pts{font-size:13px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--border);padding:3px 10px;border-radius:99px;transition:all .2s;white-space:nowrap}
+.habit.done .habit-pts{color:var(--green);background:var(--green-light);border-color:var(--green-mid)}
+.habit-del{background:none;border:none;cursor:pointer;padding:4px;color:var(--muted);opacity:0;transition:opacity .15s;flex-shrink:0}
+.habit:hover .habit-del,.habit.show-del .habit-del{opacity:1}
+
+/* ADD FORM */
+.add-wrap{padding:20px 16px 0}
+.add-toggle{width:100%;background:var(--card);border:1px dashed var(--border);border-radius:var(--radius);padding:14px;font-size:14px;color:var(--muted);font-family:'DM Sans',sans-serif;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:border-color .2s,color .2s}
+.add-toggle:hover{border-color:var(--green);color:var(--green)}
+.add-form{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:none;flex-direction:column;gap:10px}
+.add-form.open{display:flex}
+.add-form input,.add-form select{font-family:'DM Sans',sans-serif;font-size:14px;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);width:100%}
+.add-form input:focus,.add-form select:focus{outline:2px solid var(--green);outline-offset:0}
+.add-row{display:flex;gap:8px}
+.add-row input{flex:1}
+.add-row input[type=number]{width:80px;flex:none}
+.btn-primary{background:var(--green);color:#fff;border:none;border-radius:var(--radius-sm);padding:11px 20px;font-size:14px;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;flex:1;transition:opacity .15s}
+.btn-primary:hover{opacity:.88}
+.btn-ghost{background:none;border:1px solid var(--border);color:var(--muted);border-radius:var(--radius-sm);padding:11px 16px;font-size:14px;font-family:'DM Sans',sans-serif;cursor:pointer}
+
+/* SECTIONS */
+.section{display:none}
+.section.active{display:block}
+
+/* CALENDAR */
+.cal-wrap{padding:0 16px 20px}
+.cal-controls{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.cal-controls h2{font-size:18px}
+.cal-nav-btn{background:var(--card);border:1px solid var(--border);width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-dow{font-size:10px;color:var(--muted);text-align:center;font-weight:600;text-transform:uppercase;letter-spacing:.05em;padding:6px 0}
+.cal-day{aspect-ratio:1;background:var(--card);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:13px;cursor:pointer;transition:all .15s;position:relative}
+.cal-day.today{border-color:var(--green);border-width:1.5px;font-weight:600}
+.cal-day.has-pts{background:var(--green-light);border-color:var(--green-mid)}
+.cal-day.perfect{background:var(--green);color:#fff;border-color:var(--green)}
+.cal-day.empty{visibility:hidden}
+.cal-day-pts{font-size:9px;color:var(--muted);font-weight:500;margin-top:1px}
+.cal-day.has-pts .cal-day-pts{color:var(--green)}
+.cal-day.perfect .cal-day-pts{color:#fff;opacity:.85}
+
+/* CAT FILTERS */
+.cats{display:flex;gap:6px;padding:0 16px 16px;overflow-x:auto;scrollbar-width:none}
+.cats::-webkit-scrollbar{display:none}
+.cat-pill{font-size:12px;padding:6px 14px;border-radius:99px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;white-space:nowrap;font-weight:500;transition:all .15s;flex-shrink:0}
+.cat-pill.active{background:var(--text);border-color:var(--text);color:#fff}
+
+/* FRIENDS */
+.friends-wrap{padding:0 16px;display:flex;flex-direction:column;gap:10px}
+.friend-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.friend-top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;flex-shrink:0}
+.friend-name{font-size:15px;font-weight:600}
+.friend-time{font-size:12px;color:var(--muted)}
+.friend-pts-badge{margin-left:auto;font-size:13px;font-weight:600;color:var(--green);background:var(--green-light);padding:4px 12px;border-radius:99px}
+.friend-tasks{display:flex;flex-wrap:wrap;gap:6px}
+.ftask{font-size:12px;padding:4px 11px;border-radius:99px;background:var(--bg);border:1px solid var(--border);color:var(--text)}
+
+/* GROUPS */
+.groups-wrap{padding:0 16px;display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
+.group-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;cursor:pointer;transition:border-color .15s}
+.group-card:hover{border-color:var(--green)}
+.group-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.group-emoji{font-size:24px;width:40px;height:40px;background:var(--green-light);border-radius:10px;display:flex;align-items:center;justify-content:center}
+.group-info{flex:1}
+.group-name{font-size:15px;font-weight:600}
+.group-meta{font-size:12px;color:var(--muted)}
+.group-avatars{display:flex;align-items:center}
+.group-avatars .avatar{width:26px;height:26px;font-size:10px;border:2px solid var(--card);margin-left:-8px}
+.group-avatars .avatar:first-child{margin-left:0}
+.group-more{font-size:11px;color:var(--muted);margin-left:8px}
+.create-group-btn{width:100%;background:var(--card);border:1px dashed var(--border);border-radius:var(--radius);padding:14px;font-size:14px;color:var(--muted);font-family:'DM Sans',sans-serif;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:border-color .2s,color .2s}
+.create-group-btn:hover{border-color:var(--green);color:var(--green)}
+
+/* SHARE BOX */
+.share-box{margin:0 16px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px}
+.share-box h2{font-size:18px;margin-bottom:6px}
+.share-desc{font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5}
+.share-url{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;font-size:12px;color:var(--muted);word-break:break-all;margin-bottom:10px;font-family:monospace;min-height:38px;display:flex;align-items:center}
+.btn-copy{width:100%;margin-bottom:8px}
+.btn-copy-ghost{width:100%;background:none;border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:11px;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;font-weight:500}
+.btn-copy-ghost:hover{border-color:var(--green)}
+
+/* LEADERBOARD */
+.lb-tabs{display:flex;gap:6px;padding:0 16px 16px;overflow-x:auto;scrollbar-width:none}
+.lb-tabs::-webkit-scrollbar{display:none}
+.lb-tab{font-size:13px;padding:8px 16px;border-radius:99px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;white-space:nowrap;font-weight:500;flex-shrink:0}
+.lb-tab.active{background:var(--text);border-color:var(--text);color:#fff}
+.lb-wrap{padding:0 16px;display:flex;flex-direction:column;gap:8px}
+.lb-row{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:13px 16px;display:flex;align-items:center;gap:12px}
+.lb-row.you{border-color:var(--green-mid);background:var(--green-light)}
+.lb-rank{font-size:16px;width:28px;text-align:center;font-weight:600;color:var(--muted)}
+.lb-name{flex:1;font-size:14px;font-weight:500}
+.you-chip{font-size:10px;background:var(--green);color:#fff;padding:2px 7px;border-radius:99px;margin-left:6px;vertical-align:middle;font-weight:600}
+.lb-bar-wrap{width:80px;background:var(--border);border-radius:99px;height:5px;overflow:hidden}
+.lb-bar{height:5px;background:var(--green);border-radius:99px}
+.lb-pts{font-size:13px;font-weight:600;min-width:52px;text-align:right}
+
+/* MODAL */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:flex-end;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--card);width:100%;max-width:480px;border-radius:20px 20px 0 0;padding:24px 20px 30px;max-height:80vh;overflow-y:auto}
+.modal h2{font-size:22px;margin-bottom:6px}
+.modal p{font-size:13px;color:var(--muted);margin-bottom:18px}
+.modal-input-group{display:flex;flex-direction:column;gap:10px;margin-bottom:18px}
+.modal input{font-family:'DM Sans',sans-serif;font-size:14px;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);width:100%}
+.modal input:focus{outline:2px solid var(--green);outline-offset:0}
+.modal-emoji-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px}
+.emoji-pick{font-size:22px;width:42px;height:42px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.emoji-pick.selected{border-color:var(--green);background:var(--green-light)}
+.modal-btns{display:flex;gap:8px}
+
+/* TOAST */
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);background:var(--text);color:#fff;font-size:13px;font-weight:500;padding:10px 20px;border-radius:99px;z-index:999;transition:transform .3s cubic-bezier(.4,0,.2,1);white-space:nowrap;font-family:'DM Sans',sans-serif}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
+/* EMPTY */
+.empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+<!-- TODAY TAB -->
+<div id="sec-today" class="section active">
+  <div class="header">
+    <div>
+      <h1>Streakly</h1>
+      <div class="header-sub" id="today-date"></div>
+    </div>
+    <div class="date-chip" id="streak-chip">🔥 0 day streak</div>
+  </div>
+
+  <div class="banner-wrap">
+    <span class="swipe-hint left">‹</span>
+    <span class="swipe-hint right">›</span>
+    <div class="pts-banner" id="pts-banner">
+      <div>
+        <div class="pts-label">
+          <span>Points</span>
+          <span class="day-label" id="day-label">Today</span>
+        </div>
+        <div class="pts-big" id="pts-big">0</div>
+        <div class="pts-streak" id="pts-sub">Keep going!</div>
+      </div>
+      <svg class="pts-ring" viewBox="0 0 52 52">
+        <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="4"/>
+        <circle id="ring-fill" cx="26" cy="26" r="22" fill="none" stroke="#5DCAA5" stroke-width="4"
+          stroke-dasharray="138.2" stroke-dashoffset="138.2" stroke-linecap="round"
+          transform="rotate(-90 26 26)" style="transition:stroke-dashoffset .4s ease"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="prog-wrap">
+    <div class="prog-label"><span id="prog-text">0 of 0 done</span><span id="prog-pct">0%</span></div>
+    <div class="prog-track"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+  </div>
+
+  <div class="cats">
+    <span class="cat-pill active" data-cat="all">All</span>
+    <span class="cat-pill" data-cat="mind">🧠 Mind</span>
+    <span class="cat-pill" data-cat="body">💪 Body</span>
+    <span class="cat-pill" data-cat="health">💧 Health</span>
+    <span class="cat-pill" data-cat="other">✨ Other</span>
+  </div>
+
+  <div class="section-label">
+    <span id="habits-label">Today's habits</span>
+    <span style="font-size:11px;color:var(--muted);font-weight:500;text-transform:none;letter-spacing:0">Tap once · Double-tap for ×2</span>
+  </div>
+  <div class="habits" id="habit-list"></div>
+
+  <div class="add-wrap">
+    <button class="add-toggle" id="add-toggle-btn" onclick="toggleForm()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Add a habit
+    </button>
+    <div class="add-form" id="add-form">
+      <input type="text" id="in-name" placeholder="What's the habit? e.g. Read 10 pages"/>
+      <div class="add-row">
+        <input type="number" id="in-pts" placeholder="Points" min="1" max="500" value="50"/>
+        <select id="in-cat">
+          <option value="mind">🧠 Mind</option>
+          <option value="body">💪 Body</option>
+          <option value="health">💧 Health</option>
+          <option value="other">✨ Other</option>
+        </select>
+      </div>
+      <div class="add-row">
+        <button class="btn-primary" onclick="addHabit()">Add habit</button>
+        <button class="btn-ghost" onclick="toggleForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CALENDAR TAB -->
+<div id="sec-calendar" class="section">
+  <div class="header"><div><h1>Calendar</h1><div class="header-sub">Your points history</div></div></div>
+  <div class="cal-wrap">
+    <div class="cal-controls">
+      <button class="cal-nav-btn" onclick="changeMonth(-1)">‹</button>
+      <h2 id="cal-month-label">Month</h2>
+      <button class="cal-nav-btn" onclick="changeMonth(1)">›</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"></div>
+    <div style="text-align:center;font-size:12px;color:var(--muted);margin-top:14px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:var(--green-light);border:1px solid var(--green-mid);display:inline-block"></span>Some points</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:var(--green);display:inline-block"></span>All habits done</span>
+    </div>
+  </div>
+</div>
+
+<!-- FRIENDS TAB -->
+<div id="sec-friends" class="section">
+  <div class="header"><div><h1>Friends</h1><div class="header-sub">Activity and groups</div></div></div>
+
+  <div class="share-box">
+    <h2>Share your list</h2>
+    <p class="share-desc">Send this link to friends — they'll get your habit list pre-loaded and can start tracking.</p>
+    <div class="share-url" id="share-url-box">Generating link…</div>
+    <button class="btn-primary btn-copy" onclick="copyShareLink()">Copy share link</button>
+    <button class="btn-copy-ghost" onclick="loadFromUrl()">Load a friend's list from URL</button>
+  </div>
+
+  <div class="section-label"><span>Your groups</span></div>
+  <div class="groups-wrap" id="groups-list"></div>
+  <div style="padding:0 16px 24px">
+    <button class="create-group-btn" onclick="openGroupModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Create a group
+    </button>
+  </div>
+
+  <div class="section-label"><span>Friend activity</span></div>
+  <div class="friends-wrap" id="friends-list"></div>
+</div>
+
+<!-- LEADERBOARD TAB -->
+<div id="sec-lb" class="section">
+  <div class="header"><div><h1>Leaderboard</h1><div class="header-sub">Weekly points — resets Monday</div></div></div>
+  <div class="lb-tabs" id="lb-tabs"></div>
+  <div class="lb-wrap" id="lb-list"></div>
+</div>
+
+</div>
+
+<!-- NAV -->
+<nav class="nav">
+  <button class="nav-btn active" data-tab="today" onclick="switchTab('today')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Today
+  </button>
+  <button class="nav-btn" data-tab="calendar" onclick="switchTab('calendar')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+    Calendar
+  </button>
+  <button class="nav-btn" data-tab="friends" onclick="switchTab('friends')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Friends
+  </button>
+  <button class="nav-btn" data-tab="lb" onclick="switchTab('lb')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    Leaderboard
+  </button>
+</nav>
+
+<!-- GROUP MODAL -->
+<div class="modal-bg" id="group-modal">
+  <div class="modal">
+    <h2>Create a group</h2>
+    <p>Make a small group with friends and family. You'll get a private leaderboard.</p>
+    <div class="modal-input-group">
+      <input type="text" id="group-name-in" placeholder="Group name e.g. The Pact"/>
+    </div>
+    <p style="margin-bottom:8px;font-weight:500;color:var(--text);font-size:13px">Pick an emoji</p>
+    <div class="modal-emoji-row" id="emoji-picker"></div>
+    <div class="modal-btns">
+      <button class="btn-primary" onclick="createGroup()">Create group</button>
+      <button class="btn-ghost" onclick="closeGroupModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const STORAGE_KEY = 'streakly_v2';
+const TODAY = new Date().toISOString().slice(0,10);
+let viewDate = TODAY;
+let calMonth = new Date();
+
+const defaultHabits = [
+  {id:1,  name:'Wake up before alarm',                          pts:50,  cat:'mind'},
+  {id:2,  name:'Dream journal',                                 pts:50,  cat:'mind'},
+  {id:3,  name:'Take vitamins',                                 pts:10,  cat:'health'},
+  {id:4,  name:'Random act of kindness',                        pts:50,  cat:'other'},
+  {id:5,  name:'Small exercise',                                pts:50,  cat:'body'},
+  {id:6,  name:'Meditation',                                    pts:50,  cat:'mind'},
+  {id:7,  name:'Breathing exercise',                            pts:100, cat:'mind'},
+  {id:8,  name:'Gratitudes',                                    pts:30,  cat:'mind'},
+  {id:9,  name:'Affirmations',                                  pts:25,  cat:'mind'},
+  {id:10, name:'Big exercise',                                  pts:200, cat:'body'},
+  {id:11, name:'Cold shower',                                   pts:100, cat:'body'},
+  {id:12, name:'Stretch',                                       pts:50,  cat:'body'},
+  {id:13, name:"Don't spend money",                             pts:50,  cat:'other'},
+  {id:14, name:'Eat a salad',                                   pts:50,  cat:'health'},
+  {id:15, name:'Video upload',                                  pts:50,  cat:'other'},
+  {id:16, name:'Healthy drink (brain tea / infused water)',     pts:20,  cat:'health'},
+  {id:17, name:'Creativity (draw / music / post / photo)',      pts:40,  cat:'other'},
+  {id:18, name:'Project work 15 min',                           pts:50,  cat:'other'},
+  {id:19, name:'Reading 20 min',                                pts:50,  cat:'mind'},
+  {id:20, name:'Send a heartfelt message',                      pts:50,  cat:'other'},
+  {id:21, name:'Journal',                                       pts:30,  cat:'mind'},
+  {id:22, name:'Drink 2L of water',                             pts:50,  cat:'health'},
+  {id:23, name:'No social scrolling',                           pts:50,  cat:'mind'},
+  {id:24, name:'Under calorie goal',                            pts:100, cat:'health'},
+];
+
+const friendsMock = [
+  {name:'Jordan M.',initials:'JM',bg:'#B5D4F4',fg:'#0C447C',pts:185,tasks:['Big exercise','Cold shower','Journal']},
+  {name:'Alex R.',initials:'AR',bg:'#F4C0D1',fg:'#72243E',pts:120,tasks:['Reading 20 min','Stretch','Meditation']},
+  {name:'Sam T.',initials:'ST',bg:'#C0DD97',fg:'#3B6D11',pts:310,tasks:['Big exercise','Meal prep','Meditation','Cold shower']},
+  {name:'Casey L.',initials:'CL',bg:'#F4D5A0',fg:'#7C4A0E',pts:90,tasks:['Stretch','Affirmations']},
+];
+
+const groupEmojis = ['👨‍👩‍👧','🤝','🔥','💪','🌱','🚀','✨','🎯','🏆','🌟','🧘','📚'];
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return {
+    habits:[...defaultHabits.map(h=>({...h}))],
+    completions:{},      // {date: [{id, mult}]}
+    streak:0,lastDay:null,nextId:25,
+    groups:[],
+    name:'You'
+  };
+}
+
+function saveState(){localStorage.setItem(STORAGE_KEY, JSON.stringify(state));}
+
+let state = loadState();
+let activeFilter = 'all';
+let formOpen = false;
+let activeLbTab = 'all';
+let pickedEmoji = '👨‍👩‍👧';
+
+// migrate any old completion format (id only) to {id,mult}
+Object.keys(state.completions).forEach(d=>{
+  state.completions[d] = state.completions[d].map(c=>typeof c==='number'?{id:c,mult:1}:c);
+});
+
+// URL share import
+(function checkUrlLoad(){
+  const params = new URLSearchParams(window.location.search);
+  const shared = params.get('habits');
+  if(shared){
+    try{
+      const incoming = JSON.parse(atob(shared));
+      if(Array.isArray(incoming) && incoming.length > 0){
+        const merge = confirm(`Load ${incoming.length} habits from a friend's list? This will add them to your existing habits.`);
+        if(merge){
+          const maxId = Math.max(...state.habits.map(h=>h.id), state.nextId);
+          let added=0;
+          incoming.forEach((h,i)=>{
+            if(!state.habits.find(x=>x.name===h.name)){
+              state.habits.push({...h, id: maxId+i+1});
+              added++;
+            }
+          });
+          state.nextId = maxId + incoming.length + 1;
+          saveState();
+          showToast(`Added ${added} habits!`);
+        }
+        window.history.replaceState({}, '', window.location.pathname);
+      }
+    }catch(e){}
+  }
+})();
+
+function dayCompletions(date){return state.completions[date] || []}
+
+function getCompletion(date,id){return dayCompletions(date).find(c=>c.id===id)}
+
+function dayPts(date){
+  const done = dayCompletions(date);
+  return done.reduce((s,c)=>{
+    const h = state.habits.find(x=>x.id===c.id);
+    return s + (h?h.pts*c.mult:0);
+  },0);
+}
+
+function maxDayPts(){return state.habits.reduce((s,h)=>s+h.pts,0)}
+
+function toggle(id){
+  if(!state.completions[viewDate]) state.completions[viewDate] = [];
+  const arr = state.completions[viewDate];
+  const idx = arr.findIndex(c=>c.id===id);
+  if(idx>=0){arr.splice(idx,1)}
+  else{arr.push({id,mult:1})}
+  if(viewDate===TODAY) updateStreak();
+  saveState();
+  render();
+}
+
+function doubleMult(id,e){
+  if(e){e.preventDefault();e.stopPropagation()}
+  if(!state.completions[viewDate]) state.completions[viewDate] = [];
+  const arr = state.completions[viewDate];
+  const existing = arr.find(c=>c.id===id);
+  if(existing){
+    existing.mult = existing.mult >= 3 ? 1 : existing.mult + 1;
+    if(existing.mult===1){
+      // back to 1x, remove badge but keep done
+    }
+    showToast(`×${existing.mult} on this habit`);
+  } else {
+    arr.push({id,mult:2});
+    showToast('×2 added!');
+  }
+  if(viewDate===TODAY) updateStreak();
+  saveState();
+  render();
+}
+
+function updateStreak(){
+  const done = dayCompletions(TODAY);
+  const total = state.habits.length;
+  if(done.length === total && total > 0 && state.lastDay !== TODAY){
+    state.streak = (state.streak||0) + 1;
+    state.lastDay = TODAY;
+    showToast('🎉 All done! Streak updated!');
+  }
+}
+
+function addHabit(){
+  const name = document.getElementById('in-name').value.trim();
+  const pts = parseInt(document.getElementById('in-pts').value)||50;
+  const cat = document.getElementById('in-cat').value;
+  if(!name) return;
+  state.habits.push({id: state.nextId++, name, pts, cat});
+  saveState();
+  document.getElementById('in-name').value='';
+  document.getElementById('in-pts').value='50';
+  toggleForm();
+  render();
+  showToast('Habit added!');
+}
+
+function deleteHabit(id, e){
+  if(e){e.stopPropagation()}
+  if(!confirm('Delete this habit?')) return;
+  state.habits = state.habits.filter(h=>h.id!==id);
+  Object.keys(state.completions).forEach(d=>{
+    state.completions[d] = state.completions[d].filter(c=>c.id!==id);
+  });
+  saveState();
+  render();
+}
+
+function toggleForm(){
+  formOpen = !formOpen;
+  document.getElementById('add-form').classList.toggle('open', formOpen);
+  document.getElementById('add-toggle-btn').style.display = formOpen?'none':'flex';
+  if(formOpen) document.getElementById('in-name').focus();
+}
+
+function formatViewDate(){
+  const d = new Date(viewDate+'T00:00:00');
+  const today = new Date(TODAY+'T00:00:00');
+  const diff = Math.round((d-today)/(1000*60*60*24));
+  if(diff===0) return 'Today';
+  if(diff===-1) return 'Yesterday';
+  if(diff===1) return 'Tomorrow';
+  return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+}
+
+function changeDay(delta){
+  const d = new Date(viewDate+'T00:00:00');
+  d.setDate(d.getDate()+delta);
+  viewDate = d.toISOString().slice(0,10);
+  render();
+}
+
+function render(){
+  const done = dayCompletions(viewDate);
+  const pts = dayPts(viewDate);
+  const total = state.habits.length;
+  const doneCount = done.length;
+  const pct = total ? Math.round(doneCount/total*100) : 0;
+  const maxPts = maxDayPts();
+  const ringPct = maxPts ? Math.min(pts/maxPts,1) : 0;
+
+  document.getElementById('pts-big').textContent = pts;
+  document.getElementById('day-label').textContent = formatViewDate();
+  document.getElementById('prog-fill').style.width = pct+'%';
+  document.getElementById('prog-text').textContent = `${doneCount} of ${total} done`;
+  document.getElementById('prog-pct').textContent = pct+'%';
+  document.getElementById('streak-chip').textContent = `🔥 ${state.streak||0} day streak`;
+  document.getElementById('habits-label').textContent = viewDate===TODAY?"Today's habits":formatViewDate()+"'s habits";
+  document.getElementById('pts-sub').textContent = doneCount===total && total>0 ? 'All done! 🎉' : viewDate===TODAY?`${total-doneCount} habit${total-doneCount!==1?'s':''} left`:`Viewing ${formatViewDate().toLowerCase()}`;
+  const dashLen = 138.2;
+  document.getElementById('ring-fill').style.strokeDashoffset = dashLen - (dashLen * ringPct);
+
+  const filtered = activeFilter==='all' ? state.habits : state.habits.filter(h=>h.cat===activeFilter);
+  const list = document.getElementById('habit-list');
+  if(filtered.length===0){
+    list.innerHTML='<div class="empty">No habits in this category yet.</div>';
+  } else {
+    list.innerHTML = filtered.map(h=>{
+      const comp = getCompletion(viewDate,h.id);
+      const isDone = !!comp;
+      const mult = comp?comp.mult:1;
+      const effectivePts = isDone?h.pts*mult:h.pts;
+      return `<div class="habit${isDone?' done':''}" data-cat="${h.cat}" data-id="${h.id}">
+        <div class="habit-check">
+          <svg viewBox="0 0 14 14" fill="none"><polyline points="2,7 6,11 12,3" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          ${isDone&&mult>1?`<span class="mult-badge">×${mult}</span>`:''}
+        </div>
+        <div class="habit-body">
+          <div class="habit-name">${h.name}</div>
+          <div class="habit-cat">${h.cat}</div>
+        </div>
+        <span class="habit-pts">${isDone?'+':''}${effectivePts} pts</span>
+        <button class="habit-del" onclick="deleteHabit(${h.id},event)" aria-label="Delete habit">
+          <svg viewBox="0 0 18 18" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3,5 15,5"/><path d="M6,5V3h6v2M7,8v6M11,8v6"/><rect x="4" y="5" width="10" height="11" rx="2"/></svg>
+        </button>
+      </div>`;
+    }).join('');
+    attachHabitHandlers();
+  }
+
+  updateShareLink();
+}
+
+// Double-tap detection
+function attachHabitHandlers(){
+  document.querySelectorAll('.habit').forEach(el=>{
+    const id = parseInt(el.dataset.id);
+    let lastTap=0;
+    let tapTimer=null;
+    el.addEventListener('click',(e)=>{
+      if(e.target.closest('.habit-del'))return;
+      const now=Date.now();
+      if(now-lastTap<320){
+        clearTimeout(tapTimer);
+        doubleMult(id,e);
+        lastTap=0;
+      } else {
+        lastTap=now;
+        tapTimer=setTimeout(()=>{toggle(id);lastTap=0},320);
+      }
+    });
+    let pressTimer;
+    el.addEventListener('touchstart',()=>{pressTimer=setTimeout(()=>el.classList.add('show-del'),550)});
+    el.addEventListener('touchend',()=>clearTimeout(pressTimer));
+    el.addEventListener('touchmove',()=>clearTimeout(pressTimer));
+  });
+}
+
+// Day swipe on banner
+(function setupSwipe(){
+  const banner = document.getElementById('pts-banner');
+  let startX=0, currentX=0, dragging=false;
+  banner.addEventListener('touchstart',e=>{startX=e.touches[0].clientX;currentX=startX;dragging=true;banner.classList.add('dragging')});
+  banner.addEventListener('touchmove',e=>{
+    if(!dragging)return;
+    currentX=e.touches[0].clientX;
+    const dx=currentX-startX;
+    banner.style.transform=`translateX(${dx*.5}px)`;
+  });
+  banner.addEventListener('touchend',()=>{
+    if(!dragging)return;
+    dragging=false;
+    banner.classList.remove('dragging');
+    const dx=currentX-startX;
+    banner.style.transform='';
+    if(Math.abs(dx)>50){
+      if(dx<0) changeDay(1);
+      else changeDay(-1);
+    }
+  });
+  // mouse drag for desktop
+  let mDown=false,mStart=0,mCur=0;
+  banner.addEventListener('mousedown',e=>{mDown=true;mStart=e.clientX;mCur=mStart;banner.classList.add('dragging')});
+  banner.addEventListener('mousemove',e=>{if(!mDown)return;mCur=e.clientX;banner.style.transform=`translateX(${(mCur-mStart)*.5}px)`});
+  const finishMouse=()=>{
+    if(!mDown)return;
+    mDown=false;
+    banner.classList.remove('dragging');
+    const dx=mCur-mStart;
+    banner.style.transform='';
+    if(Math.abs(dx)>50){if(dx<0)changeDay(1);else changeDay(-1)}
+  };
+  banner.addEventListener('mouseup',finishMouse);
+  banner.addEventListener('mouseleave',finishMouse);
+})();
+
+// CALENDAR
+function renderCalendar(){
+  const grid = document.getElementById('cal-grid');
+  const label = document.getElementById('cal-month-label');
+  const y=calMonth.getFullYear(), m=calMonth.getMonth();
+  label.textContent=calMonth.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  const first=new Date(y,m,1);
+  const last=new Date(y,m+1,0);
+  const startDow=first.getDay();
+  const maxPts=maxDayPts();
+  let html=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>`<div class="cal-dow">${d}</div>`).join('');
+  for(let i=0;i<startDow;i++) html+='<div class="cal-day empty"></div>';
+  for(let d=1;d<=last.getDate();d++){
+    const ds = new Date(y,m,d).toISOString().slice(0,10);
+    const pts = dayPts(ds);
+    const done = dayCompletions(ds).length;
+    const total = state.habits.length;
+    const isToday = ds===TODAY;
+    let cls='cal-day';
+    if(isToday) cls+=' today';
+    if(pts>0 && done<total) cls+=' has-pts';
+    if(pts>0 && done>=total) cls+=' perfect';
+    html+=`<div class="${cls}" onclick="goToDay('${ds}')"><div>${d}</div>${pts>0?`<div class="cal-day-pts">${pts}</div>`:''}</div>`;
+  }
+  grid.innerHTML=html;
+}
+
+function changeMonth(delta){
+  calMonth = new Date(calMonth.getFullYear(),calMonth.getMonth()+delta,1);
+  renderCalendar();
+}
+
+function goToDay(ds){
+  viewDate=ds;
+  switchTab('today');
+  render();
+}
+
+// FRIENDS + GROUPS
+function renderFriends(){
+  document.getElementById('friends-list').innerHTML = friendsMock.map(f=>`
+    <div class="friend-card">
+      <div class="friend-top">
+        <div class="avatar" style="background:${f.bg};color:${f.fg}">${f.initials}</div>
+        <div><div class="friend-name">${f.name}</div><div class="friend-time">Today</div></div>
+        <span class="friend-pts-badge">+${f.pts} pts</span>
+      </div>
+      <div class="friend-tasks">${f.tasks.map(t=>`<span class="ftask">${t}</span>`).join('')}</div>
+    </div>`).join('');
+
+  const groupsEl = document.getElementById('groups-list');
+  if(state.groups.length===0){
+    groupsEl.innerHTML='<div class="empty" style="padding:20px;font-size:13px">No groups yet. Create one to make a private leaderboard with friends.</div>';
+  } else {
+    groupsEl.innerHTML = state.groups.map(g=>{
+      const members = (g.members||[]).slice(0,4);
+      const more = Math.max(0,(g.members||[]).length - 4);
+      return `<div class="group-card" onclick="openGroupLb('${g.id}')">
+        <div class="group-header">
+          <div class="group-emoji">${g.emoji}</div>
+          <div class="group-info">
+            <div class="group-name">${g.name}</div>
+            <div class="group-meta">${(g.members||[]).length} member${(g.members||[]).length!==1?'s':''}</div>
+          </div>
+        </div>
+        <div class="group-avatars">
+          ${members.map(mem=>`<div class="avatar" style="background:${mem.bg};color:${mem.fg}">${mem.initials}</div>`).join('')}
+          ${more>0?`<span class="group-more">+${more}</span>`:''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+  updateShareLink();
+}
+
+function openGroupModal(){
+  document.getElementById('group-name-in').value='';
+  pickedEmoji = groupEmojis[0];
+  document.getElementById('emoji-picker').innerHTML = groupEmojis.map(e=>`<button class="emoji-pick${e===pickedEmoji?' selected':''}" onclick="pickEmoji('${e}',this)">${e}</button>`).join('');
+  document.getElementById('group-modal').classList.add('open');
+}
+function closeGroupModal(){document.getElementById('group-modal').classList.remove('open')}
+function pickEmoji(e,el){
+  pickedEmoji=e;
+  document.querySelectorAll('.emoji-pick').forEach(x=>x.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function createGroup(){
+  const name = document.getElementById('group-name-in').value.trim();
+  if(!name){showToast('Give your group a name');return}
+  const id = 'g_'+Date.now();
+  // Seed with the user + a couple of friends for the leaderboard
+  const seedMembers = [
+    {name:'You',initials:'YO',bg:'#1a9e6e',fg:'#fff',pts:dayPts(TODAY)},
+    friendsMock[0],friendsMock[1]
+  ];
+  state.groups.push({id,name,emoji:pickedEmoji,members:seedMembers});
+  saveState();
+  closeGroupModal();
+  renderFriends();
+  showToast('Group created!');
+}
+
+function openGroupLb(id){
+  activeLbTab=id;
+  switchTab('lb');
+}
+
+// LEADERBOARD
+function renderLB(){
+  // Build tabs
+  const tabs = [{id:'all',name:'All friends'},...state.groups.map(g=>({id:g.id,name:g.emoji+' '+g.name}))];
+  document.getElementById('lb-tabs').innerHTML = tabs.map(t=>`<button class="lb-tab${t.id===activeLbTab?' active':''}" onclick="setLbTab('${t.id}')">${t.name}</button>`).join('');
+
+  // Build rows
+  let rows;
+  if(activeLbTab==='all'){
+    rows = [...friendsMock.map(f=>({name:f.name,pts:f.pts*5+Math.floor(Math.random()*50),you:false})),{name:'You',pts:dayPts(TODAY)*5||50,you:true}];
+  } else {
+    const g = state.groups.find(x=>x.id===activeLbTab);
+    if(!g){activeLbTab='all';return renderLB()}
+    rows = (g.members||[]).map(m=>({name:m.name,pts:(m.pts||0)*5+Math.floor(Math.random()*40),you:m.name==='You'}));
+  }
+  rows.sort((a,b)=>b.pts-a.pts);
+  const max = rows[0]?rows[0].pts:1;
+  document.getElementById('lb-list').innerHTML = rows.map((r,i)=>`
+    <div class="lb-row${r.you?' you':''}">
+      <span class="lb-rank">${i===0?'🥇':i===1?'🥈':i===2?'🥉':i+1}</span>
+      <span class="lb-name">${r.name}${r.you?'<span class="you-chip">you</span>':''}</span>
+      <div class="lb-bar-wrap"><div class="lb-bar" style="width:${Math.round(r.pts/max*100)}%"></div></div>
+      <span class="lb-pts">${r.pts}</span>
+    </div>`).join('');
+}
+
+function setLbTab(id){activeLbTab=id;renderLB()}
+
+// SHARE
+function updateShareLink(){
+  try{
+    const encoded = btoa(JSON.stringify(state.habits.map(({id,...h})=>h)));
+    const url = `${window.location.origin}${window.location.pathname}?habits=${encoded}`;
+    const box = document.getElementById('share-url-box');
+    if(box) box.textContent = url;
+    window._shareUrl = url;
+  }catch(e){}
+}
+function copyShareLink(){
+  if(window._shareUrl){
+    navigator.clipboard.writeText(window._shareUrl).then(()=>showToast('Link copied! 🎉')).catch(()=>{prompt('Copy this link:', window._shareUrl)});
+  }
+}
+function loadFromUrl(){
+  const url = prompt("Paste your friend's share link:");
+  if(!url) return;
+  try{
+    const params = new URLSearchParams(new URL(url).search);
+    const shared = params.get('habits');
+    if(!shared) throw new Error('No habits');
+    const incoming = JSON.parse(atob(shared));
+    const maxId = Math.max(...state.habits.map(h=>h.id), state.nextId);
+    let added=0;
+    incoming.forEach((h,i)=>{
+      if(!state.habits.find(x=>x.name===h.name)){
+        state.habits.push({...h, id: maxId+i+1});
+        added++;
+      }
+    });
+    state.nextId = maxId + incoming.length + 1;
+    saveState();
+    render();
+    showToast(`Added ${added} habits!`);
+  }catch(e){showToast("Couldn't read that link.")}
+}
+
+function switchTab(tab){
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.getElementById('sec-'+tab).classList.add('active');
+  if(tab==='friends') renderFriends();
+  if(tab==='lb') renderLB();
+  if(tab==='calendar') renderCalendar();
+  window.scrollTo(0,0);
+}
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(window._toastT);
+  window._toastT = setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+// Category filter
+document.querySelectorAll('.cat-pill').forEach(p=>{
+  p.addEventListener('click',()=>{
+    document.querySelectorAll('.cat-pill').forEach(x=>x.classList.remove('active'));
+    p.classList.add('active');
+    activeFilter = p.dataset.cat;
+    render();
+  });
+});
+
+// Modal background close
+document.getElementById('group-modal').addEventListener('click',e=>{
+  if(e.target.id==='group-modal') closeGroupModal();
+});
+
+document.getElementById('today-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+document.getElementById('in-name').addEventListener('keydown', e=>{if(e.key==='Enter') addHabit()});
+
+render();
+</script>
+</body>
+</html>
